@@ -109,6 +109,8 @@ const products = [
   },
 ];
 
+const CART_STORAGE_KEY = "aaruniTechCart";
+
 const productGrid = document.querySelector("#productGrid");
 const resultSummary = document.querySelector("#resultSummary");
 const searchForm = document.querySelector("#searchForm");
@@ -117,9 +119,19 @@ const cartCount = document.querySelector("#cartCount");
 const cartButton = document.querySelector("#cartButton");
 const accountButton = document.querySelector("#accountButton");
 const toast = document.querySelector("#toast");
+const pageOverlay = document.querySelector("#pageOverlay");
+const cartDrawer = document.querySelector("#cartDrawer");
+const closeCartButton = document.querySelector("#closeCartButton");
+const cartItemsContainer = document.querySelector("#cartItems");
+const cartPanelCount = document.querySelector("#cartPanelCount");
+const cartSubtotal = document.querySelector("#cartSubtotal");
+const clearCartButton = document.querySelector("#clearCartButton");
+const checkoutButton = document.querySelector("#checkoutButton");
+const accountModal = document.querySelector("#accountModal");
+const closeAccountButton = document.querySelector("#closeAccountButton");
 
 let activeCategory = "All";
-let cartItems = [];
+let cartItems = loadCart();
 let toastTimer;
 
 function formatPrice(price) {
@@ -156,6 +168,89 @@ function productTemplate(product) {
       </div>
     </article>
   `;
+}
+
+function loadCart() {
+  try {
+    const savedCart = JSON.parse(window.localStorage.getItem(CART_STORAGE_KEY));
+
+    if (!Array.isArray(savedCart)) {
+      return [];
+    }
+
+    return savedCart
+      .filter((item) => products.some((product) => product.id === item.id))
+      .map((item) => ({
+        id: item.id,
+        quantity: Number.isInteger(item.quantity) && item.quantity > 0 ? item.quantity : 1,
+      }));
+  } catch (error) {
+    return [];
+  }
+}
+
+function saveCart() {
+  try {
+    window.localStorage.setItem(CART_STORAGE_KEY, JSON.stringify(cartItems));
+  } catch (error) {
+    return;
+  }
+}
+
+function getCartQuantity() {
+  return cartItems.reduce((total, item) => total + item.quantity, 0);
+}
+
+function getCartSubtotal() {
+  return cartItems.reduce((total, item) => {
+    const product = products.find((entry) => entry.id === item.id);
+    return product ? total + product.price * item.quantity : total;
+  }, 0);
+}
+
+function renderCart() {
+  const quantity = getCartQuantity();
+  const subtotal = getCartSubtotal();
+
+  cartPanelCount.textContent = quantity;
+  cartSubtotal.textContent = formatPrice(subtotal);
+  clearCartButton.disabled = quantity === 0;
+  checkoutButton.disabled = quantity === 0;
+
+  if (quantity === 0) {
+    cartItemsContainer.innerHTML = `
+      <div class="cart-empty">
+        Your demo cart is empty. Add products from the marketplace grid to preview the buying flow.
+      </div>
+    `;
+    return;
+  }
+
+  cartItemsContainer.innerHTML = cartItems
+    .map((item) => {
+      const product = products.find((entry) => entry.id === item.id);
+
+      if (!product) {
+        return "";
+      }
+
+      return `
+        <div class="cart-line">
+          <img src="${product.image}" alt="${product.name}" loading="lazy" />
+          <div>
+            <strong>${product.name}</strong>
+            <span class="line-price">${formatPrice(product.price)} each</span>
+            <div class="quantity-controls" aria-label="Quantity controls for ${product.name}">
+              <button type="button" data-cart-decrease="${product.id}" aria-label="Decrease ${product.name} quantity">-</button>
+              <span>Qty ${item.quantity}</span>
+              <button type="button" data-cart-increase="${product.id}" aria-label="Increase ${product.name} quantity">+</button>
+              <button class="remove-line" type="button" data-cart-remove="${product.id}">Remove</button>
+            </div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
 }
 
 function renderProducts() {
@@ -199,8 +294,10 @@ function showToast(message) {
 }
 
 function updateCartCount() {
-  cartCount.textContent = cartItems.length;
-  cartButton.setAttribute("aria-label", `Cart with ${cartItems.length} items`);
+  const quantity = getCartQuantity();
+  cartCount.textContent = quantity;
+  cartButton.setAttribute("aria-label", `Cart with ${quantity} items`);
+  renderCart();
 }
 
 function addToCart(productId) {
@@ -210,9 +307,74 @@ function addToCart(productId) {
     return;
   }
 
-  cartItems.push(product);
+  const existingCartItem = cartItems.find((item) => item.id === productId);
+
+  if (existingCartItem) {
+    existingCartItem.quantity += 1;
+  } else {
+    cartItems.push({ id: productId, quantity: 1 });
+  }
+
+  saveCart();
   updateCartCount();
   showToast(`${product.name} added to your demo cart.`);
+}
+
+function changeCartQuantity(productId, amount) {
+  const existingCartItem = cartItems.find((item) => item.id === productId);
+
+  if (!existingCartItem) {
+    return;
+  }
+
+  existingCartItem.quantity += amount;
+
+  if (existingCartItem.quantity <= 0) {
+    cartItems = cartItems.filter((item) => item.id !== productId);
+  }
+
+  saveCart();
+  updateCartCount();
+}
+
+function removeFromCart(productId) {
+  cartItems = cartItems.filter((item) => item.id !== productId);
+  saveCart();
+  updateCartCount();
+}
+
+function openOverlay() {
+  pageOverlay.hidden = false;
+}
+
+function closeOverlayIfIdle() {
+  if (!document.body.classList.contains("cart-open") && !document.body.classList.contains("modal-open")) {
+    pageOverlay.hidden = true;
+  }
+}
+
+function openCart() {
+  openOverlay();
+  document.body.classList.add("cart-open");
+  cartDrawer.setAttribute("aria-hidden", "false");
+}
+
+function closeCart() {
+  document.body.classList.remove("cart-open");
+  cartDrawer.setAttribute("aria-hidden", "true");
+  closeOverlayIfIdle();
+}
+
+function openAccountPanel() {
+  openOverlay();
+  document.body.classList.add("modal-open");
+  accountModal.hidden = false;
+}
+
+function closeAccountPanel() {
+  document.body.classList.remove("modal-open");
+  accountModal.hidden = true;
+  closeOverlayIfIdle();
 }
 
 searchForm.addEventListener("submit", (event) => {
@@ -236,23 +398,60 @@ document.querySelectorAll("[data-category-card]").forEach((button) => {
 
 document.addEventListener("click", (event) => {
   const addButton = event.target.closest("[data-add-to-cart]");
+  const increaseButton = event.target.closest("[data-cart-increase]");
+  const decreaseButton = event.target.closest("[data-cart-decrease]");
+  const removeButton = event.target.closest("[data-cart-remove]");
 
   if (addButton) {
     addToCart(addButton.dataset.addToCart);
   }
+
+  if (increaseButton) {
+    changeCartQuantity(increaseButton.dataset.cartIncrease, 1);
+  }
+
+  if (decreaseButton) {
+    changeCartQuantity(decreaseButton.dataset.cartDecrease, -1);
+  }
+
+  if (removeButton) {
+    removeFromCart(removeButton.dataset.cartRemove);
+  }
 });
 
 accountButton.addEventListener("click", () => {
-  showToast("Account pages are not enabled in this static demo. No customer data is collected.");
+  openAccountPanel();
 });
 
 cartButton.addEventListener("click", () => {
-  if (cartItems.length === 0) {
-    showToast("Your demo cart is empty.");
-    return;
-  }
+  openCart();
+});
 
-  showToast(`${cartItems.length} demo item${cartItems.length === 1 ? "" : "s"} in cart. Checkout is not connected.`);
+closeCartButton.addEventListener("click", closeCart);
+
+closeAccountButton.addEventListener("click", closeAccountPanel);
+
+pageOverlay.addEventListener("click", () => {
+  closeCart();
+  closeAccountPanel();
+});
+
+clearCartButton.addEventListener("click", () => {
+  cartItems = [];
+  saveCart();
+  updateCartCount();
+  showToast("Demo cart cleared.");
+});
+
+checkoutButton.addEventListener("click", () => {
+  showToast("Checkout is not connected in this static GitHub Pages demo.");
+});
+
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") {
+    closeCart();
+    closeAccountPanel();
+  }
 });
 
 renderProducts();

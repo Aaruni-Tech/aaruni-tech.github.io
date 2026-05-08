@@ -107,19 +107,78 @@ img {
   letter-spacing: 0;
 }
 
-.brand-mark {
-  display: grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--brand), var(--success));
-  color: var(--paper);
-  font-size: 0.92rem;
+.logo-icon {
+  position: relative;
+  width: 58px;
+  height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.logo-a {
+  font-size: 3rem;
+  font-weight: 900;
+  line-height: 1;
+  background: linear-gradient(135deg, #0f172a, #ff7b00);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  font-family: Arial, sans-serif;
+}
+
+.cart-mini {
+  position: absolute;
+  bottom: 7px;
+  left: 5px;
+  width: 24px;
+  height: 12px;
+  border-bottom: 4px solid #ff7b00;
+  border-left: 4px solid #ff7b00;
+  border-radius: 2px;
+  transform: skewX(-18deg);
+}
+
+.cart-mini span {
+  position: absolute;
+  bottom: -8px;
+  width: 6px;
+  height: 6px;
+  background: #ff7b00;
+  border-radius: 50%;
+}
+
+.cart-mini span:first-child {
+  left: -2px;
+}
+
+.cart-mini span:last-child {
+  right: -2px;
+}
+
+.brand-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1;
 }
 
 .brand-name {
-  font-size: 1.18rem;
+  font-size: 1.7rem;
+  font-weight: 900;
+  color: #0f172a;
+}
+
+.brand-tech {
+  font-size: 1.7rem;
+  font-weight: 900;
+  color: #ff7b00;
+}
+
+.brand-tagline {
+  margin-top: 3px;
+  font-size: 0.68rem;
+  letter-spacing: 1px;
+  color: #64748b;
+  text-transform: uppercase;
 }
 
 .search-bar {

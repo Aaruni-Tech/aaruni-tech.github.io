@@ -317,11 +317,7 @@ img {
   object-position: center;
   opacity: 0.35;
 }
-.hero-image {
-  object-fit: cover;
-  opacity: 0.35;
-  transform: scale(1.05);
-}
+
 
 .hero-overlay {
   position: absolute;

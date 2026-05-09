@@ -102,9 +102,10 @@ img {
   align-items: center;
   gap: 1.2rem;
 }
-.logo-icon {
-  width: 108px;
-  height: 108px;
+.logo-icon{
+  width: 180px;
+  height: auto;
+  object-fit: contain;
 }
 .logo-a {
   position: relative;

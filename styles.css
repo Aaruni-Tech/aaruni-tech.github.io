@@ -97,15 +97,14 @@ img {
   gap: 2rem;
   align-items: center;
 }
-.brand {
+.brand{
   display: flex;
   align-items: center;
-  gap: 1.2rem;
 }
 .logo-icon{
-  width: 180px;
+  width: 220px;
   height: auto;
-  object-fit: contain;
+  display: block;
 }
 .logo-a {
   position: relative;
@@ -165,34 +164,6 @@ img {
 .cart-mini span:last-child {
   right: -2px;
 }
-
-.brand-text {
-  display: flex;
-  flex-direction: column;
-  line-height: 1;
-}
-
-.brand-name {
-  font-size: 4rem;
-  font-weight: 900;
-  color: #071b3b;
-  line-height: 0.88;
-}
-.brand-tech {
-  font-size: 4rem;
-  font-weight: 900;
-  color: #ff7a00;
-  line-height: 0.88;
-}
-.brand-tagline {
-  margin-top: 8px;
-  font-size: 1rem;
-  letter-spacing: 2.5px;
-  color: #64748b;
-  text-transform: uppercase;
-  font-weight: 800;
-}
-
 .search-bar {
   height: 68px;
   display: grid;

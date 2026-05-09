@@ -100,6 +100,41 @@ img {
 .brand{
   display: flex;
   align-items: center;
+  gap: 16px;
+  text-decoration: none;
+}
+
+.brand-text{
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.logo-icon{
+  width: 90px;
+  height: auto;
+  display: block;
+}
+
+.brand-name{
+  font-size: 54px;
+  font-weight: 800;
+  line-height: 0.9;
+  color: #001b4d;
+}
+
+.brand-tech{
+  font-size: 54px;
+  font-weight: 800;
+  color: #ff6a00;
+}
+
+.brand-tagline{
+  font-size: 12px;
+  letter-spacing: 3px;
+  margin-top: 6px;
+  color: #5a6475;
+  font-weight: 700;
 }
 .logo-icon{
   width: 220px;

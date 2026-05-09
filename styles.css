@@ -303,18 +303,20 @@ img {
   min-height: 520px;
   display: flex;
   align-items: center;
+  justify-content: center;
   overflow: hidden;
-  background: linear-gradient(135deg, #0f172a, #103f3f);
+  background: #0b1220;
 }
 
-.hero-image,
-.hero-overlay {
+.hero-image {
   position: absolute;
   inset: 0;
   width: 100%;
   height: 100%;
+  object-fit: cover;
+  object-position: center;
+  opacity: 0.35;
 }
-
 .hero-image {
   object-fit: cover;
   opacity: 0.35;
@@ -322,13 +324,14 @@ img {
 }
 
 .hero-overlay {
-  background:
-    linear-gradient(
-      90deg,
-      rgba(15, 23, 42, 0.96) 0%,
-      rgba(16, 63, 63, 0.88) 40%,
-      rgba(16, 63, 63, 0.2) 100%
-    );
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(5, 10, 20, 0.92) 0%,
+    rgba(5, 10, 20, 0.75) 45%,
+    rgba(5, 10, 20, 0.4) 100%
+  );
 }
 
 .hero-content {
@@ -1044,6 +1047,16 @@ body.cart-open .cart-drawer {
     gap: 0.75rem;
     padding: 0.75rem 0;
   }
+  
+  @media (max-width: 680px) {
+  .hero {
+    min-height: 420px;
+  }
+
+  .hero-image {
+    object-position: center;
+  }
+}
 
   .brand {
     justify-self: start;

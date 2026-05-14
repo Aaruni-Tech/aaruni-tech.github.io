@@ -4,6 +4,10 @@ Aaruni Tech is a static marketplace-style ecommerce landing website for GitHub P
 
 The site is designed for `https://aaruni-tech.github.io` and does not include a backend, payment processing, paid APIs, or customer data collection. The cart is saved only in the visitor's browser with `localStorage`; it is not sent to any server.
 
+For payment alerts, use the Google Apps Script webhook in `docs/razorpay-gmail-webhook.gs` and point Razorpay webhook events at it. That path can email `tech.aaruni@gmail.com` when a payment is captured.
+
+If you keep the static payment-link checkout, replace `RAZORPAY_PAYMENT_LINK_URL` in `script.js` with your real Razorpay payment link.
+
 ## How to Run Locally
 
 Open `index.html` directly in your browser, or run a simple local static server from the project folder:
@@ -26,6 +30,8 @@ For the repository `aaruni-tech.github.io`, GitHub Pages can serve this site dir
 - `styles.css`
 - `script.js`
 - `README.md`
+- `docs/razorpay-gmail-webhook.gs`
+- `docs/razorpay-gmail-webhook.md`
 
 Once Pages is enabled, the website should be available at:
 

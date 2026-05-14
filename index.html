@@ -323,9 +323,74 @@
     <div class="modal-card">
       <button id="closeAccountButton" type="button" aria-label="Close account panel">×</button>
       <p class="section-kicker">Aaruni account</p>
-      <h2>Sign in for faster shopping</h2>
-      <p>Save your delivery details, track orders, and manage replacements from one place.</p>
-      <button class="primary-button" type="button">Continue</button>
+      <h2>Create your account</h2>
+      <p>Save your delivery details for faster orders and support.</p>
+
+      <form class="signup-form" id="accountSignupForm">
+        <label>
+          <span>Name</span>
+          <input type="text" name="name" autocomplete="name" required />
+        </label>
+
+        <label>
+          <span>Gender</span>
+          <select name="gender" required>
+            <option value="">Select gender</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+            <option value="Other">Other</option>
+            <option value="Prefer not to say">Prefer not to say</option>
+          </select>
+        </label>
+
+        <label>
+          <span>State</span>
+          <input type="text" name="state" autocomplete="address-level1" required />
+        </label>
+
+        <label>
+          <span>Area</span>
+          <input type="text" name="area" autocomplete="address-line2" required />
+        </label>
+
+        <label>
+          <span>District</span>
+          <input type="text" name="district" autocomplete="address-level2" required />
+        </label>
+
+        <label>
+          <span>Mandal</span>
+          <input type="text" name="mandal" required />
+        </label>
+
+        <label>
+          <span>Village</span>
+          <input type="text" name="village" required />
+        </label>
+
+        <label>
+          <span>House Number</span>
+          <input type="text" name="houseNumber" autocomplete="address-line1" required />
+        </label>
+
+        <label class="signup-field-wide">
+          <span>Phone No</span>
+          <input
+            type="tel"
+            name="phone"
+            inputmode="numeric"
+            autocomplete="tel"
+            pattern="[0-9]{10}"
+            placeholder="10 digit mobile number"
+            required
+          />
+        </label>
+
+        <div class="signup-actions">
+          <button class="secondary-button" type="reset">Clear</button>
+          <button class="primary-button" type="submit">Sign Up</button>
+        </div>
+      </form>
     </div>
   </section>
 

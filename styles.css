@@ -1116,7 +1116,9 @@ body.cart-open .cart-drawer {
 
 .modal-card {
   position: relative;
-  width: min(100%, 460px);
+  width: min(100%, 780px);
+  max-height: min(88dvh, 820px);
+  overflow: auto;
   padding: 34px;
   border-radius: 12px;
   background: #ffffff;
@@ -1132,6 +1134,51 @@ body.cart-open .cart-drawer {
 .modal-card p:not(.section-kicker) {
   margin: 16px 0 24px;
   color: var(--muted);
+}
+
+.signup-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.signup-form label {
+  min-width: 0;
+  display: grid;
+  gap: 7px;
+  color: #101828;
+  font-size: 0.92rem;
+  font-weight: 850;
+}
+
+.signup-form input,
+.signup-form select {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid #ccd3dc;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  padding: 0 13px;
+  outline: 0;
+}
+
+.signup-form input:focus,
+.signup-form select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px rgba(197, 29, 99, 0.12);
+}
+
+.signup-field-wide,
+.signup-actions {
+  grid-column: 1 / -1;
+}
+
+.signup-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 8px;
 }
 
 .toast {
@@ -1445,6 +1492,19 @@ body.cart-open .cart-drawer {
 
   .deal-image {
     min-height: 300px;
+  }
+
+  .modal-card {
+    padding: 28px 18px 22px;
+  }
+
+  .signup-form {
+    grid-template-columns: 1fr;
+  }
+
+  .signup-actions {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 
   .footer-bottom {

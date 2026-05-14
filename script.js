@@ -129,6 +129,7 @@ const clearCartButton = document.querySelector("#clearCartButton");
 const checkoutButton = document.querySelector("#checkoutButton");
 const accountModal = document.querySelector("#accountModal");
 const closeAccountButton = document.querySelector("#closeAccountButton");
+const accountSignupForm = document.querySelector("#accountSignupForm");
 
 let activeCategory = "All";
 let cartItems = loadCart();
@@ -445,6 +446,21 @@ clearCartButton.addEventListener("click", () => {
 
 checkoutButton.addEventListener("click", () => {
   showToast("Checkout is not connected in this static GitHub Pages demo.");
+});
+
+accountSignupForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+
+  const signupData = Object.fromEntries(new FormData(accountSignupForm).entries());
+
+  try {
+    window.localStorage.setItem("aaruniTechSignupProfile", JSON.stringify(signupData));
+  } catch (error) {
+    return;
+  }
+
+  showToast(`Thanks ${signupData.name}, your sign-up details were saved.`);
+  closeAccountPanel();
 });
 
 document.addEventListener("keydown", (event) => {

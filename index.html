@@ -2,553 +2,302 @@
 <html lang="en-IN">
 
 <head>
-
   <meta charset="UTF-8" />
-
-  <meta
-    name="viewport"
-    content="width=device-width, initial-scale=1.0"
-  />
-
-  <meta
-    name="description"
-    content="Aaruni Tech modern ecommerce marketplace"
-  />
-
-  <title>
-    Aaruni Tech | Smart Tech Marketplace
-  </title>
-
-  <link
-    rel="stylesheet"
-    href="styles.css"
-  />
-
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Aaruni Tech modern ecommerce marketplace" />
+  <title>Aaruni Tech | Smart Tech Marketplace</title>
+  <link rel="stylesheet" href="styles.css" />
 </head>
 
 <body>
-
-  <!-- ANNOUNCEMENT -->
   <div class="announcement-bar">
-
     <p>
-      🎁 Launch week offers: free delivery over Rs. 999 and easy 7-day replacement on selected tech essentials.
+      <span aria-hidden="true">🎁</span>
+      Launch week offers: free delivery over Rs. 999 and easy 7-day replacement on selected tech essentials.
     </p>
-
   </div>
 
-  <!-- HEADER -->
   <header class="site-header">
-
     <div class="header-inner">
-
-      <!-- LOGO -->
-      <a href="#" class="brand">
-
-        <img
-          src="Aarunitech logo.png"
-          alt="Aaruni Tech"
-          class="logo-icon"
-        />
-
+      <a href="#" class="brand" aria-label="Aaruni Tech home">
+        <span class="brand-crop" aria-hidden="true"></span>
+        <span class="sr-only">Aaruni Tech</span>
       </a>
 
-      <!-- SEARCH -->
-      <form class="search-bar">
-
-        <input
-          type="text"
-          placeholder="Search phones, audio, accessories..."
-        />
-
-        <button type="submit">
-          Search
-        </button>
-
+      <form class="search-bar" id="searchForm" role="search">
+        <input id="searchInput" type="search" placeholder="Search phones, audio, accessories..." />
+        <button type="submit">Search</button>
       </form>
 
-      <!-- ACTIONS -->
       <div class="header-actions">
-
-        <button class="action-button">
-          👤 Account
+        <button class="action-button" id="accountButton" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+            <path d="M4 21a8 8 0 0 1 16 0" />
+          </svg>
+          <span>Account</span>
         </button>
 
-        <button class="cart-button">
-
-          🛒 Cart
-
-          <span>0</span>
-
+        <button class="cart-button" id="cartButton" type="button" aria-label="Cart with 0 items">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M3 4h2l2.3 11.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.5L21 8H7" />
+            <path d="M10 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+            <path d="M18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+          </svg>
+          <span>Cart</span>
+          <strong id="cartCount">0</strong>
         </button>
-
       </div>
-
     </div>
-
   </header>
 
-  <!-- CATEGORY NAV -->
-  <nav class="category-nav">
-
+  <nav class="category-nav" aria-label="Product categories">
     <div class="category-nav-inner">
-
-      <button class="category-link active">
-        All
-      </button>
-
-      <button class="category-link">
-        Mobiles
-      </button>
-
-      <button class="category-link">
-        Audio
-      </button>
-
-      <button class="category-link">
-        Computing
-      </button>
-
-      <button class="category-link">
-        Smart Home
-      </button>
-
-      <button class="category-link">
-        Accessories
-      </button>
-
+      <button class="category-link active" type="button" data-category="All">All</button>
+      <button class="category-link" type="button" data-category="Mobiles">Mobiles</button>
+      <button class="category-link" type="button" data-category="Audio">Audio</button>
+      <button class="category-link" type="button" data-category="Computing">Computing</button>
+      <button class="category-link" type="button" data-category="Smart Home">Smart Home</button>
+      <button class="category-link" type="button" data-category="Accessories">Accessories</button>
     </div>
-
   </nav>
 
-  <!-- HERO -->
-  <section class="hero">
-
-    <div class="hero-content">
-
-      <!-- LEFT -->
-      <div class="hero-left">
-
-        <p class="eyebrow">
-          RELIABLE TECH FOR EVERYDAY INDIA
-        </p>
-
-        <h1>
-          Aaruni Tech
-          <span>Marketplace</span>
-        </h1>
-
-        <p>
-          Shop practical gadgets, accessories, and home tech
-          at simple prices with a clean, no-pressure
-          marketplace experience.
-        </p>
-
-        <div class="hero-actions">
-
-          <a
-            href="#products"
-            class="primary-link"
-          >
-            Shop Products
-          </a>
-
-          <a
-            href="#deals"
-            class="secondary-link"
-          >
-            View Today's Deal
-          </a>
-
-        </div>
-
-      </div>
-
-      <!-- RIGHT -->
-      <div class="hero-right">
-
-        <img
-          src="hero-tech.png"
-          alt="Tech Devices"
-          class="hero-image"
-        />
-
-      </div>
-
-    </div>
-
-  </section>
-
-  <!-- FEATURES -->
-  <section class="features-strip">
-
-    <div class="features-inner">
-
-      <div class="feature-item">
-
-        <div class="feature-icon">
-          🚚
-        </div>
-
-        <div>
-
-          <strong>
-            Free Delivery
-          </strong>
-
+  <main>
+    <section class="hero">
+      <div class="hero-content">
+        <div class="hero-left">
+          <p class="eyebrow">RELIABLE TECH FOR EVERYDAY INDIA</p>
+          <h1>
+            Aaruni Tech
+            <span>Marketplace</span>
+          </h1>
           <p>
-            On orders over ₹999
+            Shop practical gadgets, accessories, and home tech at simple prices with a clean,
+            no-pressure marketplace experience.
           </p>
 
+          <div class="hero-actions">
+            <a href="#products" class="primary-link">Shop Products</a>
+            <a href="#deals" class="secondary-link">View Today's Deal</a>
+          </div>
         </div>
 
+        <div class="hero-right" aria-hidden="true">
+          <div class="hero-art-crop"></div>
+        </div>
       </div>
-
-      <div class="feature-item">
-
-        <div class="feature-icon">
-          🛡️
-        </div>
-
-        <div>
-
-          <strong>
-            7-Day Replacement
-          </strong>
-
-          <p>
-            Easy returns & replacements
-          </p>
-
-        </div>
-
-      </div>
-
-      <div class="feature-item">
-
-        <div class="feature-icon">
-          ✔️
-        </div>
-
-        <div>
-
-          <strong>
-            1 Year Warranty
-          </strong>
-
-          <p>
-            On selected products
-          </p>
-
-        </div>
-
-      </div>
-
-      <div class="feature-item">
-
-        <div class="feature-icon">
-          🎧
-        </div>
-
-        <div>
-
-          <strong>
-            Customer Support
-          </strong>
-
-          <p>
-            We’re here to help
-          </p>
-
-        </div>
-
-      </div>
-
-    </div>
-
-  </section>
-
-  <!-- CATEGORIES -->
-  <section class="section">
-
-    <div class="section-heading">
-
-      <p class="section-kicker">
-        Shop by need
-      </p>
-
-      <h2>
-        Popular Categories
-      </h2>
-
-    </div>
-
-    <div class="category-card-grid">
-
-      <button class="category-card">
-
-        <img
-          src="https://placehold.co/600x450/f5f5f5/111?text=Mobiles"
-          alt="Mobiles"
-        />
-
-        <span>
-          Mobiles
-        </span>
-
-        <small>
-          Daily drivers and budget phones
-        </small>
-
-      </button>
-
-      <button class="category-card">
-
-        <img
-          src="https://placehold.co/600x450/f7f7f7/111?text=Audio"
-          alt="Audio"
-        />
-
-        <span>
-          Audio
-        </span>
-
-        <small>
-          Headphones, speakers & earbuds
-        </small>
-
-      </button>
-
-      <button class="category-card">
-
-        <img
-          src="https://placehold.co/600x450/f5f5f5/111?text=Computing"
-          alt="Computing"
-        />
-
-        <span>
-          Computing
-        </span>
-
-        <small>
-          Laptops and work essentials
-        </small>
-
-      </button>
-
-      <button class="category-card">
-
-        <img
-          src="https://placehold.co/600x450/f7f7f7/111?text=Smart+Home"
-          alt="Smart Home"
-        />
-
-        <span>
-          Smart Home
-        </span>
-
-        <small>
-          Home automation devices
-        </small>
-
-      </button>
-
-    </div>
-
-  </section>
-
-  <!-- PRODUCTS -->
-  <section
-    class="section"
-    id="products"
-  >
-
-    <div class="section-heading">
-
-      <p class="section-kicker">
-        Marketplace Picks
-      </p>
-
-      <h2>
-        Featured Products
-      </h2>
-
-    </div>
-
-    <div
-      class="product-grid"
-      id="productGrid"
-    >
-
-    </div>
-
-  </section>
-
-  <!-- DEAL -->
-  <section
-    class="deal-section"
-    id="deals"
-  >
-
-    <div class="deal-inner">
-
-      <div>
-
-        <p class="section-kicker">
-          Deal of the day
-        </p>
-
-        <h2>
-          Aaruni Power Bank Pro
-        </h2>
-
-        <p>
-          A compact 20,000mAh backup for travel,
-          office, college and everyday use.
-        </p>
-
-        <div style="margin:1.5rem 0;">
-
-          <span class="deal-price">
-            ₹1,799
+    </section>
+
+    <section class="features-strip" aria-label="Shopping benefits">
+      <div class="features-inner">
+        <div class="feature-item">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M3 7h11v10H3z" />
+              <path d="M14 11h4l3 3v3h-7z" />
+              <path d="M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+              <path d="M18 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z" />
+            </svg>
           </span>
-
-          <span class="deal-tag">
-            Save 28%
-          </span>
-
+          <div>
+            <strong>Free Delivery</strong>
+            <p>On orders over Rs. 999</p>
+          </div>
         </div>
 
-        <button class="primary-button">
-          Add Deal To Cart
+        <div class="feature-item">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6z" />
+              <path d="m9 12 2 2 4-5" />
+            </svg>
+          </span>
+          <div>
+            <strong>7-Day Replacement</strong>
+            <p>Easy returns & replacements</p>
+          </div>
+        </div>
+
+        <div class="feature-item">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M12 3 5 6v5c0 4.5 3 8.4 7 10 4-1.6 7-5.5 7-10V6z" />
+              <path d="m9 12 2 2 4-5" />
+            </svg>
+          </span>
+          <div>
+            <strong>1 Year Warranty</strong>
+            <p>On selected products</p>
+          </div>
+        </div>
+
+        <div class="feature-item">
+          <span class="feature-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24">
+              <path d="M5 14v-2a7 7 0 0 1 14 0v2" />
+              <path d="M5 14h3v5H5z" />
+              <path d="M16 14h3v5h-3z" />
+              <path d="M13 20h2a4 4 0 0 0 4-4" />
+            </svg>
+          </span>
+          <div>
+            <strong>Customer Support</strong>
+            <p>We're here to help</p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-heading">
+        <p class="section-kicker">Shop by need</p>
+        <h2>Popular Categories</h2>
+      </div>
+
+      <div class="category-card-grid">
+        <button class="category-card" type="button" data-category-card="Mobiles">
+          <span class="category-visual category-visual-phone" aria-hidden="true"></span>
+          <span>Mobiles</span>
+          <small>Daily drivers and budget phones</small>
         </button>
 
+        <button class="category-card" type="button" data-category-card="Audio">
+          <span class="category-visual category-visual-audio" aria-hidden="true"></span>
+          <span>Audio</span>
+          <small>Headphones, speakers & earbuds</small>
+        </button>
+
+        <button class="category-card" type="button" data-category-card="Computing">
+          <span class="category-visual category-visual-laptop" aria-hidden="true"></span>
+          <span>Computing</span>
+          <small>Laptops and work essentials</small>
+        </button>
+
+        <button class="category-card" type="button" data-category-card="Smart Home">
+          <span class="category-visual category-visual-home" aria-hidden="true"></span>
+          <span>Smart Home</span>
+          <small>Home automation devices</small>
+        </button>
+      </div>
+    </section>
+
+    <section class="section" id="products">
+      <div class="section-heading products-heading">
+        <div>
+          <p class="section-kicker">Marketplace Picks</p>
+          <h2>Featured Products</h2>
+        </div>
+        <p class="result-summary" id="resultSummary"></p>
       </div>
 
-      <img
-        src="https://placehold.co/720x520/f5f5f5/111?text=Power+Bank"
-        alt="Power Bank"
-        class="deal-image"
-      />
+      <div class="product-grid" id="productGrid"></div>
+    </section>
 
-    </div>
+    <section class="deal-section" id="deals">
+      <div class="deal-inner">
+        <div>
+          <p class="section-kicker">Deal of the day</p>
+          <h2>Aaruni Power Bank Pro</h2>
+          <p>A compact 20,000mAh backup for travel, office, college and everyday use.</p>
 
-  </section>
+          <div class="deal-meta">
+            <span class="deal-price">Rs. 1,799</span>
+            <span class="deal-tag">Save 28%</span>
+          </div>
 
-  <!-- FOOTER -->
+          <button class="primary-button" type="button" data-add-to-cart="power-bank-pro">
+            Add Deal To Cart
+          </button>
+        </div>
+
+        <div class="deal-image" aria-hidden="true">
+          <span></span>
+        </div>
+      </div>
+    </section>
+  </main>
+
   <footer class="site-footer">
-
     <div class="footer-inner">
-
       <div class="footer-brand">
-
-        <img
-          src="Aarunitech logo.png"
-          alt="Aaruni Tech"
-          class="logo-icon"
-        />
-
-        <p>
-          Reliable, affordable and modern tech
-          shopping for Indian households.
-        </p>
-
+        <a href="#" class="brand footer-logo" aria-label="Aaruni Tech home">
+          <span class="brand-crop" aria-hidden="true"></span>
+          <span class="sr-only">Aaruni Tech</span>
+        </a>
+        <p>Reliable, affordable and modern tech shopping for Indian households.</p>
       </div>
 
       <div class="footer-column">
-
-        <h3>
-          About
-        </h3>
-
-        <a href="#">
-          Our Story
-        </a>
-
-        <a href="#">
-          Careers
-        </a>
-
-        <a href="#">
-          Press
-        </a>
-
+        <h3>About</h3>
+        <a href="#">Our Story</a>
+        <a href="#">Careers</a>
+        <a href="#">Press</a>
       </div>
 
       <div class="footer-column">
-
-        <h3>
-          Contact
-        </h3>
-
-        <a href="#">
-          Support Center
-        </a>
-
-        <a href="#">
-          Store Partners
-        </a>
-
+        <h3>Contact</h3>
+        <a href="#">Support Center</a>
+        <a href="#">Store Partners</a>
       </div>
 
       <div class="footer-column">
-
-        <h3>
-          Policies
-        </h3>
-
-        <a href="#">
-          Shipping
-        </a>
-
-        <a href="#">
-          Returns
-        </a>
-
-        <a href="#">
-          Privacy
-        </a>
-
+        <h3>Policies</h3>
+        <a href="#">Shipping</a>
+        <a href="#">Returns</a>
+        <a href="#">Privacy</a>
       </div>
 
       <div class="footer-column">
-
-        <h3>
-          Social
-        </h3>
-
-        <a href="#">
-          Instagram
-        </a>
-
-        <a href="#">
-          LinkedIn
-        </a>
-
-        <a href="#">
-          YouTube
-        </a>
-
+        <h3>Social</h3>
+        <a href="#">Instagram</a>
+        <a href="#">LinkedIn</a>
+        <a href="#">YouTube</a>
       </div>
-
     </div>
 
     <div class="footer-bottom">
-
-      <span>
-        © 2026 Aaruni Tech
-      </span>
-
-      <span>
-        Modern Ecommerce UI
-      </span>
-
+      <span>&copy; 2026 Aaruni Tech</span>
+      <span>Modern Ecommerce UI</span>
     </div>
-
   </footer>
 
-  <script src="script.js"></script>
+  <div class="page-overlay" id="pageOverlay" hidden></div>
 
+  <aside class="cart-drawer" id="cartDrawer" aria-hidden="true" aria-label="Shopping cart">
+    <div class="drawer-header">
+      <div>
+        <p>Your cart</p>
+        <strong><span id="cartPanelCount">0</span> items</strong>
+      </div>
+      <button id="closeCartButton" type="button" aria-label="Close cart">×</button>
+    </div>
+
+    <div class="cart-items" id="cartItems"></div>
+
+    <div class="cart-total">
+      <span>Subtotal</span>
+      <strong id="cartSubtotal">Rs. 0</strong>
+    </div>
+
+    <div class="drawer-actions">
+      <button class="secondary-button" id="clearCartButton" type="button">Clear</button>
+      <button class="primary-button" id="checkoutButton" type="button">Checkout</button>
+    </div>
+  </aside>
+
+  <section class="account-modal" id="accountModal" hidden aria-label="Account panel">
+    <div class="modal-card">
+      <button id="closeAccountButton" type="button" aria-label="Close account panel">×</button>
+      <p class="section-kicker">Aaruni account</p>
+      <h2>Sign in for faster shopping</h2>
+      <p>Save your delivery details, track orders, and manage replacements from one place.</p>
+      <button class="primary-button" type="button">Continue</button>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="script.js"></script>
 </body>
 
 </html>

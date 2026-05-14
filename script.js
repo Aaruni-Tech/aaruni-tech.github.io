@@ -110,6 +110,13 @@ const products = [
 ];
 
 const CART_STORAGE_KEY = "aaruniTechCart";
+const SIGNUP_STORAGE_KEY = "aaruniTechSignupProfile";
+const RAZORPAY_KEY_ID = "rzp_test_FAKE_KEY_ID";
+const RAZORPAY_CURRENCY = "INR";
+const RAZORPAY_MERCHANT_NAME = "Aaruni Tech";
+const RAZORPAY_MERCHANT_DESCRIPTION = "Aaruni Tech checkout";
+const RAZORPAY_MERCHANT_IMAGE = "docs/Aaruni%20tech.png";
+const RAZORPAY_SCRIPT_SRC = "https://checkout.razorpay.com/v1/checkout.js";
 
 const productGrid = document.querySelector("#productGrid");
 const resultSummary = document.querySelector("#resultSummary");
@@ -344,6 +351,106 @@ function removeFromCart(productId) {
   updateCartCount();
 }
 
+function loadSignupProfile() {
+  try {
+    const rawProfile = window.localStorage.getItem(SIGNUP_STORAGE_KEY);
+
+    if (!rawProfile) {
+      return {};
+    }
+
+    const parsedProfile = JSON.parse(rawProfile);
+
+    if (!parsedProfile || typeof parsedProfile !== "object") {
+      return {};
+    }
+
+    return parsedProfile;
+  } catch (error) {
+    return {};
+  }
+}
+
+function loadRazorpayScript() {
+  return new Promise((resolve, reject) => {
+    if (window.Razorpay) {
+      resolve(window.Razorpay);
+      return;
+    }
+
+    const existingScript = document.querySelector(`script[src="${RAZORPAY_SCRIPT_SRC}"]`);
+
+    if (existingScript) {
+      existingScript.addEventListener("load", () => resolve(window.Razorpay), { once: true });
+      existingScript.addEventListener("error", reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = RAZORPAY_SCRIPT_SRC;
+    script.async = true;
+    script.addEventListener("load", () => resolve(window.Razorpay), { once: true });
+    script.addEventListener("error", () => reject(new Error("Failed to load Razorpay Checkout.")), { once: true });
+    document.head.appendChild(script);
+  });
+}
+
+function buildDemoOrderId() {
+  const timestamp = Date.now().toString(36);
+  return `order_demo_${timestamp}`;
+}
+
+async function startRazorpayCheckout() {
+  const amount = getCartSubtotal();
+
+  if (amount <= 0) {
+    showToast("Add at least one product before checkout.");
+    return;
+  }
+
+  try {
+    const Razorpay = await loadRazorpayScript();
+    const signupProfile = loadSignupProfile();
+
+    const options = {
+      key: RAZORPAY_KEY_ID,
+      amount: amount * 100,
+      currency: RAZORPAY_CURRENCY,
+      name: RAZORPAY_MERCHANT_NAME,
+      description: RAZORPAY_MERCHANT_DESCRIPTION,
+      image: RAZORPAY_MERCHANT_IMAGE,
+      order_id: buildDemoOrderId(),
+      prefill: {
+        name: signupProfile.name || "Aaruni Customer",
+        contact: signupProfile.phone || "",
+        email: "tech.aaruni@gmail.com",
+      },
+      theme: {
+        color: "#bd155a",
+      },
+      handler(response) {
+        showToast(`Payment success: ${response.razorpay_payment_id}`);
+      },
+      modal: {
+        ondismiss() {
+          showToast("Checkout closed.");
+        },
+      },
+    };
+
+    const checkout = new Razorpay(options);
+
+    checkout.on("payment.failed", (response) => {
+      const reason = response?.error?.description || "Payment failed.";
+      showToast(reason);
+    });
+
+    checkout.open();
+  } catch (error) {
+    showToast("Razorpay Checkout could not load.");
+  }
+}
+
 function openOverlay() {
   pageOverlay.hidden = false;
 }
@@ -444,17 +551,13 @@ clearCartButton.addEventListener("click", () => {
   showToast("Demo cart cleared.");
 });
 
-checkoutButton.addEventListener("click", () => {
-  showToast("Checkout is not connected in this static GitHub Pages demo.");
-});
-
 accountSignupForm.addEventListener("submit", (event) => {
   event.preventDefault();
 
   const signupData = Object.fromEntries(new FormData(accountSignupForm).entries());
 
   try {
-    window.localStorage.setItem("aaruniTechSignupProfile", JSON.stringify(signupData));
+    window.localStorage.setItem(SIGNUP_STORAGE_KEY, JSON.stringify(signupData));
   } catch (error) {
     return;
   }
@@ -462,6 +565,8 @@ accountSignupForm.addEventListener("submit", (event) => {
   showToast(`Thanks ${signupData.name}, your sign-up details were saved.`);
   closeAccountPanel();
 });
+
+checkoutButton.addEventListener("click", startRazorpayCheckout);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {

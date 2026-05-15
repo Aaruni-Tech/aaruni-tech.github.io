@@ -563,27 +563,30 @@ accountSignupForm.addEventListener("submit", (event) => {
 
 checkoutButton.addEventListener("click", startRazorpayCheckout);
 
-document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") {
-    closeCart();
-    closeAccountPanel();
+document.addEventListener("DOMContentLoaded", () => {
+
+  const openSupport = document.getElementById("openSupport");
+  const closeSupport = document.getElementById("closeSupport");
+  const supportBox = document.getElementById("supportBox");
+
+  if (openSupport && supportBox) {
+    openSupport.addEventListener("click", () => {
+
+      if (supportBox.style.display === "block") {
+        supportBox.style.display = "none";
+      } else {
+        supportBox.style.display = "block";
+      }
+
+    });
   }
-});
-const openSupport =
-document.getElementById("openSupport");
 
-const closeSupport =
-document.getElementById("closeSupport");
+  if (closeSupport && supportBox) {
+    closeSupport.addEventListener("click", () => {
+      supportBox.style.display = "none";
+    });
+  }
 
-const supportBox =
-document.getElementById("supportBox");
-
-openSupport.addEventListener("click", () => {
-  supportBox.style.display = "block";
-});
-
-closeSupport.addEventListener("click", () => {
-  supportBox.style.display = "none";
 });
 
 renderProducts();

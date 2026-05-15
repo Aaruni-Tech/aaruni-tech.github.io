@@ -454,6 +454,19 @@
   </button>
 
 </div>
+  <script>
+const chatBubble = document.querySelector(".chat-bubble");
+const supportBox = document.querySelector(".support-box");
+const closeSupport = document.querySelector("#closeSupport");
+
+chatBubble.addEventListener("click", () => {
+  supportBox.style.display = "block";
+});
+
+closeSupport.addEventListener("click", () => {
+  supportBox.style.display = "none";
+});
+</script>
 </body>
 
 </html>

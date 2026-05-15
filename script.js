@@ -225,7 +225,7 @@ function renderCart() {
   if (quantity === 0) {
     cartItemsContainer.innerHTML = `
       <div class="cart-empty">
-        Your demo cart is empty. Add products from the marketplace grid to preview the buying flow.
+        Your cart is empty. Add products from the marketplace grid to continue to checkout.
       </div>
     `;
     return;
@@ -322,7 +322,7 @@ function addToCart(productId) {
 
   saveCart();
   updateCartCount();
-  showToast(`${product.name} added to your demo cart.`);
+  showToast(`${product.name} added to your cart.`);
 }
 
 function changeCartQuantity(productId, amount) {
@@ -543,7 +543,7 @@ clearCartButton.addEventListener("click", () => {
   cartItems = [];
   saveCart();
   updateCartCount();
-  showToast("Demo cart cleared.");
+  showToast("Cart cleared.");
 });
 
 accountSignupForm.addEventListener("submit", (event) => {

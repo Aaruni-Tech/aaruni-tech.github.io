@@ -1,6 +1,6 @@
 # Aaruni Tech Ecommerce Landing Website
 
-Aaruni Tech is a static marketplace-style ecommerce landing website for GitHub Pages. It uses plain HTML, CSS, and JavaScript to present a modern Indian tech storefront with category browsing, product search, a browser-only demo cart, a deal section, trust messaging, and footer links.
+Aaruni Tech is a static marketplace-style ecommerce website for GitHub Pages. It uses plain HTML, CSS, and JavaScript to present a modern Indian tech storefront with category browsing, product search, a browser-based cart, Razorpay Checkout, a deal section, trust messaging, and footer policy links.
 
 The site is designed for `https://aaruni-tech.github.io` and does not include a backend, paid APIs, or server-side customer data collection. The cart is saved in the visitor's browser with `localStorage` and is sent to Razorpay only when the visitor opens checkout.
 
@@ -32,6 +32,12 @@ For the repository `aaruni-tech.github.io`, GitHub Pages can serve this site dir
 - `styles.css`
 - `script.js`
 - `README.md`
+- `privacy-policy.html`
+- `refund-policy.html`
+- `shipping-policy.html`
+- `terms-and-conditions.html`
+- `contact-us.html`
+- `about-us.html`
 - `docs/razorpay-gmail-webhook.gs`
 - `docs/razorpay-gmail-webhook.md`
 

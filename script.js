@@ -111,7 +111,9 @@ const products = [
 
 const CART_STORAGE_KEY = "aaruniTechCart";
 const SIGNUP_STORAGE_KEY = "aaruniTechSignupProfile";
-const RAZORPAY_PAYMENT_LINK_URL = "https://rzp.io/l/FAKE_AARUNI_PAYMENT_LINK";
+const RAZORPAY_KEY_ID = "rzp_test_SpYO2ojU9ZzsNG";
+const RAZORPAY_BUSINESS_NAME = "Aaruni Tech";
+const RAZORPAY_SUPPORT_EMAIL = "tech.aaruni@gmail.com";
 
 const productGrid = document.querySelector("#productGrid");
 const resultSummary = document.querySelector("#resultSummary");
@@ -366,7 +368,34 @@ function loadSignupProfile() {
   }
 }
 
-function startPaymentLinkCheckout() {
+function truncateNote(value) {
+  return String(value || "").slice(0, 240);
+}
+
+function getCartItemsSummary() {
+  return cartItems
+    .map((item) => {
+      const product = products.find((entry) => entry.id === item.id);
+      return product ? `${product.name} x ${item.quantity}` : "";
+    })
+    .filter(Boolean)
+    .join(", ");
+}
+
+function getDeliveryAddress(profile) {
+  return [
+    profile.houseNumber,
+    profile.village,
+    profile.mandal,
+    profile.area,
+    profile.district,
+    profile.state,
+  ]
+    .filter(Boolean)
+    .join(", ");
+}
+
+function startRazorpayCheckout() {
   const amount = getCartSubtotal();
 
   if (amount <= 0) {
@@ -374,22 +403,47 @@ function startPaymentLinkCheckout() {
     return;
   }
 
-  const signupProfile = loadSignupProfile();
-  const paymentUrl = new URL(RAZORPAY_PAYMENT_LINK_URL);
-
-  paymentUrl.searchParams.set("amount", String(amount));
-  paymentUrl.searchParams.set("currency", "INR");
-  paymentUrl.searchParams.set("name", signupProfile.name || "Aaruni Customer");
-  paymentUrl.searchParams.set("phone", signupProfile.phone || "");
-  paymentUrl.searchParams.set("email", "tech.aaruni@gmail.com");
-
-  const openedWindow = window.open(paymentUrl.toString(), "_blank", "noopener,noreferrer");
-
-  if (!openedWindow) {
-    window.location.href = paymentUrl.toString();
+  if (typeof window.Razorpay !== "function") {
+    showToast("Razorpay checkout could not load. Please try again.");
+    return;
   }
 
-  showToast("Opening Razorpay payment link.");
+  const signupProfile = loadSignupProfile();
+  const amountInPaise = Math.round(amount * 100);
+
+  const checkout = new window.Razorpay({
+    key: RAZORPAY_KEY_ID,
+    amount: amountInPaise,
+    currency: "INR",
+    name: RAZORPAY_BUSINESS_NAME,
+    description: `Cart checkout - ${getCartQuantity()} item${getCartQuantity() === 1 ? "" : "s"}`,
+    prefill: {
+      name: signupProfile.name || "",
+      contact: signupProfile.phone || "",
+    },
+    notes: {
+      cart_items: truncateNote(getCartItemsSummary()),
+      delivery_name: truncateNote(signupProfile.name),
+      delivery_phone: truncateNote(signupProfile.phone),
+      delivery_address: truncateNote(getDeliveryAddress(signupProfile)),
+      support_email: RAZORPAY_SUPPORT_EMAIL,
+      source: "aaruni-tech.github.io",
+    },
+    theme: {
+      color: "#c51d63",
+    },
+    handler(response) {
+      const paymentId = response && response.razorpay_payment_id ? response.razorpay_payment_id : "";
+      showToast(paymentId ? `Payment completed: ${paymentId}` : "Payment completed.");
+    },
+    modal: {
+      ondismiss() {
+        showToast("Razorpay checkout closed.");
+      },
+    },
+  });
+
+  checkout.open();
 }
 
 function openOverlay() {
@@ -507,7 +561,7 @@ accountSignupForm.addEventListener("submit", (event) => {
   closeAccountPanel();
 });
 
-checkoutButton.addEventListener("click", startPaymentLinkCheckout);
+checkoutButton.addEventListener("click", startRazorpayCheckout);
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape") {

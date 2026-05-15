@@ -401,16 +401,21 @@
 
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <script src="script.js?v=razorpay-checkout-20260515"></script>
-  <!-- SUPPORT CHAT BUBBLE -->
-
+  <!-- SUPPORT WIDGET -->
 <div class="support-widget">
 
+  <!-- CHAT BUTTON -->
+  <button class="chat-bubble" id="openSupport">
+    💬
+  </button>
+
+  <!-- SUPPORT BOX -->
   <div class="support-box" id="supportBox">
 
     <div class="support-header">
       <div>
-        <h3>Aaruni Tech</h3>
-        <p>Usually replies within 1 hour</p>
+        <h3>Need Help?</h3>
+        <p>Aaruni Tech Support</p>
       </div>
 
       <button id="closeSupport">✕</button>
@@ -419,40 +424,27 @@
     <div class="support-body">
 
       <p class="support-text">
-        Need help with orders, delivery, or products?
-        Send us a message and our team will help you.
+        Chat with us on WhatsApp or Instagram.
       </p>
 
-      <input type="text" placeholder="Your Name">
-
-      <input type="tel" placeholder="Phone Number">
-
-      <textarea placeholder="Your Message"></textarea>
-
       <a
-        href="https://wa.me/917842097003"
+        href="https://wa.me/91YOURNUMBER"
         target="_blank"
         class="whatsapp-btn"
       >
-        Chat on WhatsApp
+        WhatsApp Support
       </a>
 
       <a
-        href="https://www.instagram.com/aarunitech/"
+        href="https://instagram.com/aarunitech"
         target="_blank"
         class="instagram-btn"
       >
-        Instagram Support
+        Instagram DM
       </a>
 
     </div>
-
   </div>
-
-  <button class="chat-bubble" id="openSupport">
-    💬
-  </button>
-
 </div>
   <script>
 const chatBubble = document.querySelector(".chat-bubble");

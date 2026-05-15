@@ -569,6 +569,22 @@ document.addEventListener("keydown", (event) => {
     closeAccountPanel();
   }
 });
+const openSupport =
+document.getElementById("openSupport");
+
+const closeSupport =
+document.getElementById("closeSupport");
+
+const supportBox =
+document.getElementById("supportBox");
+
+openSupport.addEventListener("click", () => {
+  supportBox.style.display = "block";
+});
+
+closeSupport.addEventListener("click", () => {
+  supportBox.style.display = "none";
+});
 
 renderProducts();
 updateCartCount();

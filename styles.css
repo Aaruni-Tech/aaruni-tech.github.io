@@ -1769,6 +1769,39 @@ body.cart-open .cart-drawer {
     background-size: 637px 358px;
     background-position: -301px -114px;
   }
+}/* =========================
+   GLOBAL ANIMATIONS
+========================= */
+
+.fade-up{
+  opacity:0;
+  transform:translateY(40px);
+  animation:fadeUp 1s ease forwards;
+}
+
+@keyframes fadeUp{
+  to{
+    opacity:1;
+    transform:translateY(0);
+  }
+}
+
+.product-card,
+.category-card,
+.feature-item{
+  animation:fadeUp 0.8s ease both;
+}
+
+.product-card:nth-child(2){
+  animation-delay:0.1s;
+}
+
+.product-card:nth-child(3){
+  animation-delay:0.2s;
+}
+
+.product-card:nth-child(4){
+  animation-delay:0.3s;
 }
   /* =========================
    SUPPORT WIDGET

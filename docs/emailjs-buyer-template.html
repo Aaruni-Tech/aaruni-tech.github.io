@@ -1,0 +1,40 @@
+<div style="margin:0;background:#f4f7fb;padding:24px;font-family:Arial,sans-serif;color:#111827;">
+  <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+    <div style="background:#0f766e;color:#ffffff;padding:24px;">
+      <h1 style="margin:0;font-size:24px;">Aaruni Tech</h1>
+      <p style="margin:8px 0 0;font-size:16px;">Thanks {{customer_name}}, your order is confirmed.</p>
+    </div>
+
+    <div style="padding:24px;">
+      <p style="margin:0 0 18px;color:#475467;">We will notify you when your order is packed and shipped.</p>
+
+      <div style="display:grid;gap:10px;margin-bottom:22px;">
+        <p style="margin:0;"><strong>Order ID:</strong> {{order_id}}</p>
+        <p style="margin:0;"><strong>Order Date:</strong> {{order_date}}</p>
+        <p style="margin:0;"><strong>Payment ID:</strong> {{payment_id}}</p>
+        <p style="margin:0;"><strong>Estimated Delivery:</strong> {{estimated_delivery_date}}</p>
+      </div>
+
+      <table style="width:100%;border-collapse:collapse;margin:0 0 22px;">
+        <thead>
+          <tr style="background:#f9fafb;color:#475467;font-size:13px;">
+            <th style="padding:12px;text-align:left;">Product</th>
+            <th style="padding:12px;text-align:center;">Qty</th>
+            <th style="padding:12px;text-align:right;">Price</th>
+            <th style="padding:12px;text-align:right;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{{items_html}}}
+        </tbody>
+      </table>
+
+      <p style="margin:0 0 8px;"><strong>Total Amount:</strong> {{total_amount}}</p>
+      <p style="margin:0 0 18px;"><strong>Delivery Address:</strong> {{delivery_address}}</p>
+
+      <a href="{{tracking_url}}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">Track Order</a>
+
+      <p style="margin:22px 0 0;color:#667085;font-size:13px;">Need help? Contact {{support_email}}.</p>
+    </div>
+  </div>
+</div>

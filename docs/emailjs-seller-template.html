@@ -1,0 +1,40 @@
+<div style="margin:0;background:#f8fafc;padding:24px;font-family:Arial,sans-serif;color:#111827;">
+  <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;">
+    <div style="background:#111827;color:#ffffff;padding:22px;">
+      <h1 style="margin:0;font-size:22px;">New Aaruni Tech Order</h1>
+      <p style="margin:8px 0 0;">Order {{order_id}} has been paid successfully.</p>
+    </div>
+
+    <div style="padding:24px;">
+      <h2 style="margin:0 0 10px;font-size:18px;">Customer</h2>
+      <p style="margin:0 0 6px;"><strong>Name:</strong> {{customer_name}}</p>
+      <p style="margin:0 0 6px;"><strong>Phone:</strong> {{customer_phone}}</p>
+      <p style="margin:0 0 6px;"><strong>Email:</strong> {{customer_email}}</p>
+      <p style="margin:0 0 18px;"><strong>Address:</strong> {{delivery_address}}</p>
+
+      <h2 style="margin:0 0 10px;font-size:18px;">Order</h2>
+      <p style="margin:0 0 6px;"><strong>Order Date:</strong> {{order_date}}</p>
+      <p style="margin:0 0 6px;"><strong>Timestamp:</strong> {{order_timestamp}}</p>
+      <p style="margin:0 0 6px;"><strong>Status:</strong> {{order_status}}</p>
+      <p style="margin:0 0 6px;"><strong>Total:</strong> {{total_amount}}</p>
+      <p style="margin:0 0 18px;"><strong>Razorpay Payment ID:</strong> {{payment_id}}</p>
+
+      <h2 style="margin:0 0 10px;font-size:18px;">Items</h2>
+      <table style="width:100%;border-collapse:collapse;margin:0 0 18px;">
+        <thead>
+          <tr style="background:#f9fafb;color:#475467;font-size:13px;">
+            <th style="padding:12px;text-align:left;">Product</th>
+            <th style="padding:12px;text-align:center;">Qty</th>
+            <th style="padding:12px;text-align:right;">Price</th>
+            <th style="padding:12px;text-align:right;">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          {{{items_html}}}
+        </tbody>
+      </table>
+
+      <p style="margin:0;color:#667085;font-size:13px;">Tracking page: {{tracking_url}}</p>
+    </div>
+  </div>
+</div>

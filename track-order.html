@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Track your Aaruni Tech order" />
+  <title>Track Order | Aaruni Tech</title>
+  <meta name="theme-color" content="#c51d63" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+
+<body>
+  <header class="simple-header">
+    <div class="simple-header-inner">
+      <a href="index.html" class="brand" aria-label="Aaruni Tech home">
+        <span class="brand-crop" aria-hidden="true"></span>
+        <span class="sr-only">Aaruni Tech</span>
+      </a>
+
+      <nav class="simple-nav" aria-label="Website navigation">
+        <a href="index.html#products">Shop</a>
+        <a href="about-us.html">About</a>
+        <a href="contact-us.html">Contact</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="info-page">
+    <section class="info-hero">
+      <p class="section-kicker">Order</p>
+      <h1>Track Order</h1>
+      <p>Tracking uses the order saved in this browser after checkout.</p>
+    </section>
+
+    <section class="tracking-layout" id="trackingPage"></section>
+  </main>
+
+  <script src="order.js?v=20260516-2"></script>
+  <script src="whatsapp.js?v=20260516-2"></script>
+  <script src="pwa.js?v=20260516-2"></script>
+  <script>
+    document.addEventListener("DOMContentLoaded", () => {
+      window.AaruniOrders.renderTrackingPage("trackingPage");
+    });
+  </script>
+</body>
+
+</html>

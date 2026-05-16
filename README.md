@@ -31,6 +31,13 @@ For the repository `aaruni-tech.github.io`, GitHub Pages can serve this site dir
 - `index.html`
 - `styles.css`
 - `script.js`
+- `pwa.js`
+- `sw.js`
+- `manifest.webmanifest`
+- `version.json`
+- `icons/icon-192.png`
+- `icons/icon-512.png`
+- `icons/apple-touch-icon.png`
 - `README.md`
 - `privacy-policy.html`
 - `refund-policy.html`
@@ -46,6 +53,18 @@ Once Pages is enabled, the website should be available at:
 ```text
 https://aaruni-tech.github.io
 ```
+
+## PWA Versioning
+
+The site is installable as a PWA on supported mobile browsers. Android Chrome shows the native install prompt when the browser confirms the site is installable; iOS Safari shows an in-site prompt with Add to Home Screen instructions.
+
+When shipping website changes that installed app users should receive, bump the version in all three files:
+
+- `version.json`
+- `pwa.js`
+- `sw.js`
+
+The installed app checks `version.json` on open. If the stored version differs, the site shows an update prompt and asks the service worker to activate the new cached version.
 
 ## Future Improvements
 

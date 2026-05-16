@@ -395,6 +395,10 @@ function getDeliveryAddress(profile) {
     .join(", ");
 }
 
+function isCheckoutProfileComplete(profile) {
+  return Boolean(profile.name && profile.email && profile.phone && getDeliveryAddress(profile));
+}
+
 function startRazorpayCheckout() {
   const amount = getCartSubtotal();
 
@@ -409,6 +413,13 @@ function startRazorpayCheckout() {
   }
 
   const signupProfile = loadSignupProfile();
+
+  if (!isCheckoutProfileComplete(signupProfile)) {
+    showToast("Add your name, email, phone, and delivery address before checkout.");
+    openAccountPanel();
+    return;
+  }
+
   const amountInPaise = Math.round(amount * 100);
 
   const checkout = new window.Razorpay({
@@ -419,6 +430,7 @@ function startRazorpayCheckout() {
     description: `Cart checkout - ${getCartQuantity()} item${getCartQuantity() === 1 ? "" : "s"}`,
     prefill: {
       name: signupProfile.name || "",
+      email: signupProfile.email || "",
       contact: signupProfile.phone || "",
     },
     notes: {
@@ -426,6 +438,7 @@ function startRazorpayCheckout() {
       cart_quantity: truncateNote(getCartQuantity()),
       cart_total: truncateNote(formatPrice(amount)),
       delivery_name: truncateNote(signupProfile.name),
+      delivery_email: truncateNote(signupProfile.email),
       delivery_phone: truncateNote(signupProfile.phone),
       delivery_address: truncateNote(getDeliveryAddress(signupProfile)),
       support_email: RAZORPAY_SUPPORT_EMAIL,
@@ -436,11 +449,40 @@ function startRazorpayCheckout() {
     },
     handler(response) {
       const paymentId = response && response.razorpay_payment_id ? response.razorpay_payment_id : "";
+      const order = window.AaruniOrders
+        ? window.AaruniOrders.createOrder({
+            cartItems: cartItems.map((item) => ({ ...item })),
+            products,
+            buyerProfile: signupProfile,
+            paymentId,
+            supportEmail: RAZORPAY_SUPPORT_EMAIL,
+          })
+        : null;
+
+      if (order && window.AaruniOrders) {
+        window.AaruniOrders.saveOrder(order);
+      }
       cartItems = [];
       saveCart();
       updateCartCount();
       closeCart();
-      showToast(paymentId ? `Order placed. Payment ID: ${paymentId}` : "Order placed.");
+      showToast(order ? `Order placed: ${order.id}` : paymentId ? `Order placed. Payment ID: ${paymentId}` : "Order placed.");
+
+      if (order && window.AaruniEmail) {
+        window.AaruniEmail.sendOrderEmails(order).then((result) => {
+          if (result && result.skipped) {
+            return;
+          }
+
+          const failedEmail = result.results && result.results.some((entry) => !entry.ok && !entry.skipped);
+
+          if (failedEmail) {
+            console.warn("Order was saved, but one or more EmailJS notifications failed.", result.results);
+          }
+        }).catch((error) => {
+          console.warn("Order was saved, but EmailJS notification failed.", error);
+        });
+      }
     },
     modal: {
       ondismiss() {

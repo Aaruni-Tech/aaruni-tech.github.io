@@ -376,7 +376,7 @@ function getCartItemsSummary() {
   return cartItems
     .map((item) => {
       const product = products.find((entry) => entry.id === item.id);
-      return product ? `${product.name} x ${item.quantity}` : "";
+      return product ? `${product.name} x ${item.quantity} (${formatPrice(product.price * item.quantity)})` : "";
     })
     .filter(Boolean)
     .join(", ");
@@ -423,6 +423,8 @@ function startRazorpayCheckout() {
     },
     notes: {
       cart_items: truncateNote(getCartItemsSummary()),
+      cart_quantity: truncateNote(getCartQuantity()),
+      cart_total: truncateNote(formatPrice(amount)),
       delivery_name: truncateNote(signupProfile.name),
       delivery_phone: truncateNote(signupProfile.phone),
       delivery_address: truncateNote(getDeliveryAddress(signupProfile)),
@@ -434,7 +436,11 @@ function startRazorpayCheckout() {
     },
     handler(response) {
       const paymentId = response && response.razorpay_payment_id ? response.razorpay_payment_id : "";
-      showToast(paymentId ? `Payment completed: ${paymentId}` : "Payment completed.");
+      cartItems = [];
+      saveCart();
+      updateCartCount();
+      closeCart();
+      showToast(paymentId ? `Order placed. Payment ID: ${paymentId}` : "Order placed.");
     },
     modal: {
       ondismiss() {
@@ -562,32 +568,6 @@ accountSignupForm.addEventListener("submit", (event) => {
 });
 
 checkoutButton.addEventListener("click", startRazorpayCheckout);
-
-document.addEventListener("DOMContentLoaded", () => {
-
-  const openSupport = document.getElementById("openSupport");
-  const closeSupport = document.getElementById("closeSupport");
-  const supportBox = document.getElementById("supportBox");
-
-  if (openSupport && supportBox) {
-    openSupport.addEventListener("click", () => {
-
-      if (supportBox.style.display === "block") {
-        supportBox.style.display = "none";
-      } else {
-        supportBox.style.display = "block";
-      }
-
-    });
-  }
-
-  if (closeSupport && supportBox) {
-    closeSupport.addEventListener("click", () => {
-      supportBox.style.display = "none";
-    });
-  }
-
-});
 
 renderProducts();
 updateCartCount();

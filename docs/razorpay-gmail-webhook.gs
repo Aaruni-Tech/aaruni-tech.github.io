@@ -60,15 +60,25 @@ function buildSummary_(payload) {
   const order = payload && payload.payload && payload.payload.order && payload.payload.order.entity
     ? payload.payload.order.entity
     : null;
+  const notes = collectNotes_(payment, order);
 
   const paymentId = payment && payment.id ? String(payment.id) : "unknown";
-  const orderId = order && order.id ? String(order.id) : "unknown";
+  const orderId = order && order.id ? String(order.id) : payment && payment.order_id ? String(payment.order_id) : "not available";
   const amount = payment && typeof payment.amount === "number" ? payment.amount / 100 : null;
   const currency = payment && payment.currency ? String(payment.currency) : "INR";
   const amountText = amount !== null ? `${currency} ${amount.toFixed(2)}` : "unknown amount";
+  const customerName = notes.delivery_name || payment && payment.notes && payment.notes.name || "not provided";
+  const customerPhone = notes.delivery_phone || payment && payment.contact || "not provided";
+  const customerEmail = payment && payment.email ? String(payment.email) : "not provided";
+  const deliveryAddress = notes.delivery_address || "not provided";
+  const cartItems = notes.cart_items || "not provided";
+  const cartQuantity = notes.cart_quantity || "not provided";
+  const cartTotal = notes.cart_total || amountText;
+  const paymentMethod = payment && payment.method ? String(payment.method) : "not provided";
+  const paymentStatus = payment && payment.status ? String(payment.status) : "not provided";
 
   const subjectMap = {
-    "payment.captured": "Payment received",
+    "payment.captured": "Order placed - payment received",
     "order.paid": "Order paid",
     "payment.failed": "Payment failed",
   };
@@ -77,24 +87,63 @@ function buildSummary_(payload) {
   const subject = `[Aaruni Tech] ${title}`;
   const plainText = [
     `Event: ${eventName}`,
+    `Customer: ${customerName}`,
+    `Phone: ${customerPhone}`,
+    `Email: ${customerEmail}`,
+    `Delivery address: ${deliveryAddress}`,
+    `Cart items: ${cartItems}`,
+    `Cart quantity: ${cartQuantity}`,
+    `Cart total: ${cartTotal}`,
     `Payment ID: ${paymentId}`,
     `Order ID: ${orderId}`,
     `Amount: ${amountText}`,
+    `Method: ${paymentMethod}`,
+    `Status: ${paymentStatus}`,
     `Time: ${new Date().toISOString()}`,
   ].join("\n");
 
   const htmlBody = `
     <div style="font-family:Arial,sans-serif;line-height:1.5">
-      <h2 style="margin:0 0 12px">Aaruni Tech payment update</h2>
+      <h2 style="margin:0 0 12px">Aaruni Tech order update</h2>
       <p><strong>Event:</strong> ${escapeHtml_(eventName)}</p>
+      <h3 style="margin:18px 0 8px">Customer</h3>
+      <p><strong>Name:</strong> ${escapeHtml_(customerName)}</p>
+      <p><strong>Phone:</strong> ${escapeHtml_(customerPhone)}</p>
+      <p><strong>Email:</strong> ${escapeHtml_(customerEmail)}</p>
+      <p><strong>Delivery address:</strong> ${escapeHtml_(deliveryAddress)}</p>
+      <h3 style="margin:18px 0 8px">Order</h3>
+      <p><strong>Cart items:</strong> ${escapeHtml_(cartItems)}</p>
+      <p><strong>Cart quantity:</strong> ${escapeHtml_(cartQuantity)}</p>
+      <p><strong>Cart total:</strong> ${escapeHtml_(cartTotal)}</p>
+      <h3 style="margin:18px 0 8px">Payment</h3>
       <p><strong>Payment ID:</strong> ${escapeHtml_(paymentId)}</p>
       <p><strong>Order ID:</strong> ${escapeHtml_(orderId)}</p>
       <p><strong>Amount:</strong> ${escapeHtml_(amountText)}</p>
+      <p><strong>Method:</strong> ${escapeHtml_(paymentMethod)}</p>
+      <p><strong>Status:</strong> ${escapeHtml_(paymentStatus)}</p>
       <p><strong>Time:</strong> ${escapeHtml_(new Date().toISOString())}</p>
     </div>
   `;
 
   return { subject, plainText, htmlBody };
+}
+
+function collectNotes_(payment, order) {
+  const notes = {};
+
+  if (order && order.notes && typeof order.notes === "object") {
+    Object.keys(order.notes).forEach((key) => {
+      notes[key] = String(order.notes[key] || "");
+    });
+  }
+
+  if (payment && payment.notes && typeof payment.notes === "object") {
+    Object.keys(payment.notes).forEach((key) => {
+      notes[key] = String(payment.notes[key] || "");
+    });
+  }
+
+  return notes;
 }
 
 function jsonResponse_(data) {

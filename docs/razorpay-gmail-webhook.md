@@ -6,6 +6,7 @@ Use this Apps Script webhook if you want Razorpay payment notifications sent to 
 
 - Accepts Razorpay webhook `POST` requests
 - Sends Gmail notifications for `payment.captured`, `order.paid`, and `payment.failed`
+- Includes checkout notes such as customer name, phone number, delivery address, cart items, quantity, total, payment ID, and payment status
 - Runs as a Google Apps Script web app
 
 ## Files
@@ -28,11 +29,12 @@ https://script.google.com/macros/s/YOUR_DEPLOYMENT_ID/exec?token=YOUR_WEBHOOK_TO
 
 6. Subscribe to these events in Razorpay:
    - `payment.captured`
-   - `order.paid`
    - `payment.failed`
+   - `order.paid` only if you later create Razorpay Orders from a backend
 
 ## Notes
 
 - This is a lightweight notification path for GitHub Pages.
+- For this static checkout, `payment.captured` is the recommended paid-order email event.
 - If you later want strict Razorpay signature validation, move the receiver to a serverless backend that can read the webhook signature header.
 - Razorpay webhook docs: `payment.captured`, `order.paid`, and webhook validation are documented in the official Razorpay webhook guides.

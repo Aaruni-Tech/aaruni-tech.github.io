@@ -1,5 +1,5 @@
 :root {
-  --design-image: url("docs/Aaruni%20tech.png");
+  --design-image: url("docs/aarunitech.png");
   --ink: #111827;
   --muted: #5f6b7a;
   --paper: #ffffff;
@@ -114,8 +114,8 @@ a {
   height: 99px;
   background-image: var(--design-image);
   background-repeat: no-repeat;
-  background-size: 1672px 941px;
-  background-position: -48px -62px;
+  background-size: 1804px 872px;
+  background-position: -52px -58px;
 }
 
 .search-bar {
@@ -394,14 +394,11 @@ a {
   overflow: visible;
 }
 
-.hero-art-crop {
-  width: 850px;
-  height: 516px;
+.hero-art {
+  width: min(850px, 100%);
+  height: auto;
   margin-right: -18px;
-  background-image: var(--design-image);
-  background-repeat: no-repeat;
-  background-size: 1672px 941px;
-  background-position: -790px -300px;
+  object-fit: contain;
   filter: drop-shadow(0 30px 50px rgba(0, 0, 0, 0.28));
 }
 
@@ -1895,11 +1892,8 @@ body.cart-open .cart-drawer {
     grid-template-columns: minmax(390px, 0.9fr) minmax(430px, 1.1fr);
   }
 
-  .hero-art-crop {
-    width: 638px;
-    height: 387px;
-    background-size: 1254px 706px;
-    background-position: -593px -225px;
+  .hero-art {
+    width: min(638px, 100%);
   }
 
   .features-inner {
@@ -1961,12 +1955,9 @@ body.cart-open .cart-drawer {
     justify-content: center;
   }
 
-  .hero-art-crop {
-    width: 518px;
-    height: 314px;
+  .hero-art {
+    width: min(518px, 100%);
     margin: 0;
-    background-size: 1019px 574px;
-    background-position: -482px -183px;
   }
 
   .features-inner {
@@ -2128,11 +2119,8 @@ body.cart-open .cart-drawer {
     min-height: 230px;
   }
 
-  .hero-art-crop {
-    width: 380px;
-    height: 231px;
-    background-size: 748px 421px;
-    background-position: -353px -134px;
+  .hero-art {
+    width: min(380px, 100%);
   }
 
   .features-strip {
@@ -2299,11 +2287,8 @@ body.cart-open .cart-drawer {
     background-position: -29px -38px;
   }
 
-  .hero-art-crop {
-    width: 324px;
-    height: 196px;
-    background-size: 637px 358px;
-    background-position: -301px -114px;
+  .hero-art {
+    width: min(324px, 100%);
   }
 }/* =========================
    GLOBAL ANIMATIONS

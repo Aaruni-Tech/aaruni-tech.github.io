@@ -2339,6 +2339,151 @@ body.cart-open .cart-drawer {
 .product-card:nth-child(4){
   animation-delay:0.3s;
 }
+
+/* =========================
+   ADMIN ORDERS DASHBOARD
+========================= */
+
+.admin-card {
+  background: #ffffff;
+  border: 1px solid #e6eaef;
+  border-radius: 14px;
+  padding: 18px;
+  box-shadow: 0 18px 44px rgba(17, 24, 39, 0.07);
+}
+
+.admin-auth {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  align-items: end;
+}
+
+.admin-auth label span {
+  display: block;
+  font-weight: 800;
+  color: #344054;
+  margin-bottom: 8px;
+}
+
+.admin-auth input,
+.admin-filters input,
+.admin-filters select {
+  width: 100%;
+  min-height: 52px;
+  border-radius: 10px;
+  border: 1px solid #cfd5dd;
+  padding: 0 12px;
+}
+
+.admin-actions {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.admin-note {
+  grid-column: 1 / -1;
+  margin: 0;
+  color: #667085;
+  font-size: 0.95rem;
+}
+
+.admin-filters {
+  display: grid;
+  grid-template-columns: 1.6fr 0.8fr 0.8fr 0.8fr 0.8fr auto;
+  gap: 12px;
+  align-items: end;
+}
+
+.admin-filters label span {
+  display: block;
+  font-weight: 800;
+  color: #344054;
+  margin-bottom: 8px;
+  font-size: 0.95rem;
+}
+
+.admin-table-wrap {
+  margin-top: 16px;
+  overflow: auto;
+  border: 1px solid #e6eaef;
+  border-radius: 14px;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: #ffffff;
+  min-width: 920px;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 14px 12px;
+  border-bottom: 1px solid #eef1f4;
+  vertical-align: top;
+}
+
+.admin-table th {
+  text-align: left;
+  color: #475467;
+  font-size: 0.9rem;
+  background: #fbfcfe;
+}
+
+.admin-right {
+  text-align: right;
+  white-space: nowrap;
+  font-weight: 900;
+}
+
+.admin-strong {
+  font-weight: 950;
+  color: #101828;
+}
+
+.admin-muted {
+  color: #667085;
+  font-size: 0.9rem;
+  margin-top: 3px;
+}
+
+.admin-pill {
+  display: inline-flex;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255, 106, 0, 0.12);
+  color: #111111;
+  font-weight: 900;
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+
+.admin-actions-cell {
+  white-space: nowrap;
+}
+
+.admin-actions-cell .secondary-button {
+  min-height: 42px;
+  padding: 0 12px;
+  font-size: 0.95rem;
+}
+
+@media (max-width: 1040px) {
+  .admin-auth {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-filters {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .admin-filters button {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
 /* =========================
    WHATSAPP SUPPORT WIDGET
 ========================= */

@@ -64,7 +64,9 @@ function buildOrderItems(cartItems, products) {
 function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmail }) {
   const createdAt = new Date();
   const items = buildOrderItems(cartItems, products);
-  const totalAmount = items.reduce((total, item) => total + item.lineTotal, 0);
+  const subtotal = items.reduce((total, item) => total + item.lineTotal, 0);
+  const shippingCharge = 0;
+  const totalAmount = subtotal + shippingCharge;
   const addressParts = getAddressParts(buyerProfile || {});
   const orderId = generateOrderId(createdAt);
 
@@ -74,6 +76,7 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
     status: "Confirmed",
     createdAt: createdAt.toISOString(),
     orderDate: formatOrderDate(createdAt),
+    orderTime: new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit" }).format(createdAt),
     estimatedDeliveryDate: formatOrderDate(addOrderDays(createdAt, 5)),
     payment: {
       provider: "Razorpay",
@@ -91,6 +94,8 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
     },
     items,
     totalQuantity: items.reduce((total, item) => total + item.quantity, 0),
+    subtotal,
+    shippingCharge,
     totalAmount,
     supportEmail: supportEmail || "tech.aaruni@gmail.com",
     trackingUrl: `${window.location.origin}${window.location.pathname.replace(/index\.html$/, "")}track-order.html?order_id=${encodeURIComponent(orderId)}`,

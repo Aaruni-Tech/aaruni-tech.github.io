@@ -449,7 +449,7 @@ function startRazorpayCheckout() {
     },
     handler(response) {
       const paymentId = response && response.razorpay_payment_id ? response.razorpay_payment_id : "";
-      const order = window.AaruniOrders
+      const orderDraft = window.AaruniOrders
         ? window.AaruniOrders.createOrder({
             cartItems: cartItems.map((item) => ({ ...item })),
             products,
@@ -459,30 +459,54 @@ function startRazorpayCheckout() {
           })
         : null;
 
-      if (order && window.AaruniOrders) {
-        window.AaruniOrders.saveOrder(order);
-      }
+      const finalizeOrder = async () => {
+        if (!orderDraft || !window.AaruniOrders) {
+          showToast(paymentId ? `Payment received. Payment ID: ${paymentId}` : "Payment received.");
+          return;
+        }
+
+        if (window.AaruniBackend && window.AaruniBackend.isConfigured && window.AaruniBackend.isConfigured()) {
+          try {
+            const result = await window.AaruniBackend.createOrderAfterPayment({
+              paymentId,
+              orderDraft,
+            });
+
+            if (result && result.ok && result.order) {
+              window.AaruniOrders.saveOrder(result.order);
+              showToast(`Order confirmed: ${result.order.id}`);
+              return;
+            }
+
+            console.warn("Order verification failed or was skipped.", result);
+            showToast("Payment received. Order verification pending. Please contact support.");
+            window.AaruniOrders.saveOrder(orderDraft);
+            return;
+          } catch (error) {
+            console.warn("Order verification failed.", error);
+            showToast("Payment received. Order verification pending. Please contact support.");
+            window.AaruniOrders.saveOrder(orderDraft);
+            return;
+          }
+        }
+
+        // Fallback: keep existing EmailJS notifications for static-only deployments.
+        window.AaruniOrders.saveOrder(orderDraft);
+        showToast(`Order placed: ${orderDraft.id}`);
+
+        if (window.AaruniEmail) {
+          window.AaruniEmail
+            .sendOrderEmails(orderDraft)
+            .catch((error) => console.warn("EmailJS notification failed.", error));
+        }
+      };
+
       cartItems = [];
       saveCart();
       updateCartCount();
       closeCart();
-      showToast(order ? `Order placed: ${order.id}` : paymentId ? `Order placed. Payment ID: ${paymentId}` : "Order placed.");
 
-      if (order && window.AaruniEmail) {
-        window.AaruniEmail.sendOrderEmails(order).then((result) => {
-          if (result && result.skipped) {
-            return;
-          }
-
-          const failedEmail = result.results && result.results.some((entry) => !entry.ok && !entry.skipped);
-
-          if (failedEmail) {
-            console.warn("Order was saved, but one or more EmailJS notifications failed.", result.results);
-          }
-        }).catch((error) => {
-          console.warn("Order was saved, but EmailJS notification failed.", error);
-        });
-      }
+      finalizeOrder();
     },
     modal: {
       ondismiss() {

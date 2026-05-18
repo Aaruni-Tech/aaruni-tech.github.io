@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Admin Orders | Aaruni Tech</title>
+    <link rel="stylesheet" href="styles.css?v=20260518-2" />
+  </head>
+  <body>
+    <header class="site-header">
+      <div class="header-inner">
+        <a href="index.html" class="brand" aria-label="Aaruni Tech home">
+          <span class="brand-crop" aria-hidden="true"></span>
+          <span class="sr-only">Aaruni Tech</span>
+        </a>
+        <div></div>
+        <div class="header-actions">
+          <a class="action-button" href="index.html">Back to site</a>
+        </div>
+      </div>
+    </header>
+
+    <main>
+      <section class="section">
+        <div class="section-heading">
+          <p class="section-kicker">Admin</p>
+          <h2>Orders Dashboard</h2>
+        </div>
+
+        <div class="admin-card" id="adminAuthCard">
+          <form class="admin-auth" id="adminLoginForm" autocomplete="on">
+            <label>
+              <span>Email</span>
+              <input type="email" name="email" autocomplete="email" required />
+            </label>
+            <label>
+              <span>Password</span>
+              <input type="password" name="password" autocomplete="current-password" required />
+            </label>
+            <div class="admin-actions">
+              <button class="primary-button" type="submit">Sign In</button>
+              <button class="secondary-button" type="button" id="adminSignOut" hidden>Sign Out</button>
+            </div>
+            <p class="admin-note" id="adminAuthNote"></p>
+          </form>
+        </div>
+
+        <div class="admin-card" id="adminDashboard" hidden>
+          <div class="admin-filters">
+            <label>
+              <span>Search</span>
+              <input type="search" id="orderSearch" placeholder="Order ID, email, phone, payment ID…" />
+            </label>
+            <label>
+              <span>Payment</span>
+              <select id="paymentFilter">
+                <option value="all">All</option>
+                <option value="Paid">Paid</option>
+                <option value="Pending verification">Pending verification</option>
+              </select>
+            </label>
+            <label>
+              <span>Status</span>
+              <select id="statusFilter">
+                <option value="all">All</option>
+                <option value="Confirmed">Confirmed</option>
+                <option value="Packed">Packed</option>
+                <option value="Shipped">Shipped</option>
+                <option value="Delivered">Delivered</option>
+              </select>
+            </label>
+            <label>
+              <span>Date From</span>
+              <input type="date" id="dateFrom" />
+            </label>
+            <label>
+              <span>Date To</span>
+              <input type="date" id="dateTo" />
+            </label>
+            <button class="secondary-button" type="button" id="refreshOrders">Refresh</button>
+          </div>
+
+          <div class="admin-table-wrap">
+            <table class="admin-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Customer</th>
+                  <th>Amount</th>
+                  <th>Payment</th>
+                  <th>Status</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody id="ordersTbody"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
+    <script src="firebase-config.js?v=20260518-1"></script>
+    <script src="admin-orders.js?v=20260518-1"></script>
+  </body>
+</html>
+

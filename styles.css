@@ -111,11 +111,11 @@ a {
 .brand-crop {
   display: block;
   width: 444px;
-  height: 99px;
+  height: 112px;
   background-image: var(--design-image);
   background-repeat: no-repeat;
   background-size: 1672px 941px;
-  background-position: -48px -62px;
+  background-position: -48px -54px;
 }
 
 .search-bar {
@@ -1879,9 +1879,9 @@ body.cart-open .cart-drawer {
 
   .brand-crop {
     width: 355px;
-    height: 79px;
+    height: 90px;
     background-size: 1338px 753px;
-    background-position: -38px -50px;
+    background-position: -38px -44px;
   }
 
   .action-button,
@@ -2033,9 +2033,9 @@ body.cart-open .cart-drawer {
 
   .brand-crop {
     width: 310px;
-    height: 70px;
+    height: 78px;
     background-size: 1170px 659px;
-    background-position: -34px -44px;
+    background-position: -34px -40px;
   }
 
   .simple-header-inner {
@@ -2294,9 +2294,9 @@ body.cart-open .cart-drawer {
 @media (max-width: 420px) {
   .brand-crop {
     width: 270px;
-    height: 61px;
+    height: 68px;
     background-size: 1017px 572px;
-    background-position: -29px -38px;
+    background-position: -29px -34px;
   }
 
   .hero-art-crop {

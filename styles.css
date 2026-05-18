@@ -295,7 +295,7 @@ a {
   min-height: 0;
   margin: 0 auto;
   display: grid;
-  grid-template-columns: minmax(430px, 0.86fr) minmax(560px, 1.14fr);
+  grid-template-columns: minmax(430px, 1fr) minmax(520px, 1fr);
   align-items: center;
   gap: 36px;
   padding: 64px 0 88px;
@@ -397,13 +397,22 @@ a {
   overflow: visible;
 }
 
+.hero-art-frame {
+  width: min(760px, 100%);
+  border-radius: 22px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  box-shadow: 0 26px 70px rgba(0, 0, 0, 0.28);
+}
+
 .hero-art {
-  width: min(850px, 100%);
+  width: 100%;
   height: auto;
   max-height: 520px;
-  margin-right: 0;
+  display: block;
   object-fit: contain;
-  filter: drop-shadow(0 30px 50px rgba(0, 0, 0, 0.28));
+  filter: none;
 }
 
 .features-strip {
@@ -1901,7 +1910,7 @@ body.cart-open .cart-drawer {
     grid-template-columns: minmax(390px, 0.9fr) minmax(430px, 1.1fr);
   }
 
-  .hero-art {
+  .hero-art-frame {
     width: min(638px, 100%);
   }
 
@@ -1969,7 +1978,6 @@ body.cart-open .cart-drawer {
   }
 
   .hero-art {
-    width: min(518px, 100%);
     margin: 0;
   }
 
@@ -2110,8 +2118,13 @@ body.cart-open .cart-drawer {
     font-size: 0.98rem;
   }
 
+  .hero::before,
+  .hero::after {
+    display: none;
+  }
+
   .hero-content {
-    padding: 48px 0 40px;
+    padding: 34px 0 70px;
   }
 
   .eyebrow {
@@ -2129,6 +2142,7 @@ body.cart-open .cart-drawer {
   .hero-actions {
     display: grid;
     grid-template-columns: 1fr;
+    margin-top: 18px;
   }
 
   .primary-link,
@@ -2138,15 +2152,15 @@ body.cart-open .cart-drawer {
   }
 
   .hero-right {
-    min-height: 230px;
+    min-height: 210px;
   }
 
-  .hero-art {
-    width: min(380px, 100%);
+  .hero-art-frame {
+    width: min(540px, 100%);
   }
 
   .features-strip {
-    margin-top: 12px;
+    margin-top: 10px;
   }
 
   .features-inner {
@@ -2309,8 +2323,8 @@ body.cart-open .cart-drawer {
     background-position: -29px -38px;
   }
 
-  .hero-art {
-    width: min(324px, 100%);
+  .hero-art-frame {
+    width: min(420px, 100%);
   }
 }/* =========================
    GLOBAL ANIMATIONS

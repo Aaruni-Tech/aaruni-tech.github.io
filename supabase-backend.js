@@ -37,14 +37,20 @@ function getClient() {
       url: url || "",
       anonKey: anonKey ? maskValue(anonKey) : "",
     });
+    console.log("Supabase URL:", url);
     // Use window.* globals so GitHub Pages deployments work reliably.
-    supabaseClient = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
-      auth: {
-        persistSession: false,
-        autoRefreshToken: false,
-        detectSessionInUrl: false,
-      },
-    });
+    try {
+      supabaseClient = createClient(url, anonKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      });
+    } catch (err) {
+      console.error("Supabase connection failed:", err);
+      throw err;
+    }
   }
 
   return supabaseClient;
@@ -222,6 +228,75 @@ function buildOrderLikeObject({ orderDraft, paymentId, customer, statusEvents, o
       )}`,
     statusHistory,
   };
+}
+
+function parseOrderProducts(productName, quantity, totalPrice) {
+  const productsText = String(productName || "").trim();
+  if (!productsText) {
+    return [];
+  }
+
+  const entries = productsText.split(",").map((entry) => entry.trim()).filter(Boolean);
+  const fallbackQuantity = Number(quantity || 1);
+  const fallbackLineTotal = Number(totalPrice || 0);
+
+  return entries.map((entry, index) => {
+    const match = entry.match(/^(.*)\s+x\s+(\d+)$/i);
+    const itemQuantity = match ? Number(match[2]) : fallbackQuantity;
+    const itemName = match ? match[1].trim() : entry;
+
+    return {
+      id: null,
+      name: itemName || "Product",
+      category: "",
+      image: "",
+      price: itemQuantity > 0 && entries.length === 1 ? fallbackLineTotal / itemQuantity : 0,
+      quantity: itemQuantity > 0 ? itemQuantity : 1,
+      lineTotal: entries.length === 1 ? fallbackLineTotal : 0,
+      sortIndex: index,
+    };
+  });
+}
+
+function orderFromFlatOrderRow(row) {
+  const createdAtIso = row.created_at || new Date().toISOString();
+  const items = parseOrderProducts(row.product_name, row.quantity, row.total_price);
+  const totalAmount = Number(row.total_price || 0);
+  const status = normalizeStatus(row.order_status || row.status || "Order Confirmed");
+
+  return buildOrderLikeObject({
+    orderDraft: {
+      id: row.order_id || row.id,
+      status,
+      subtotal: totalAmount,
+      totalAmount,
+      createdAt: createdAtIso,
+      payment: {
+        id: row.payment_id || "not available",
+        provider: "Razorpay",
+        status: row.payment_status || "Paid",
+      },
+      buyer: {
+        name: row.customer_name || "Customer",
+        email: row.customer_email || "",
+        phone: row.phone || "",
+        address: row.shipping_address || "",
+        addressParts: [],
+      },
+      items,
+    },
+    paymentId: row.payment_id || "not available",
+    customer: {
+      name: row.customer_name || "Customer",
+      email: row.customer_email || "",
+      phone: row.phone || "",
+      address: row.shipping_address || "",
+      addressParts: [],
+    },
+    statusEvents: [{ status, at: createdAtIso }],
+    orderItems: items,
+    orderAtIso: createdAtIso,
+  });
 }
 
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
@@ -445,7 +520,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       console.warn("[Supabase] v2 orders insert threw", error);
     }
 
-    // Do not attempt legacy `customers/order_items` schema here.
+    // Do not attempt older schema variants here.
     // Production checkout should use either:
     // - RPC `place_order_cart` (preferred), or
     // - direct insert into v2 `orders` table (fallback).
@@ -475,95 +550,30 @@ async function listOrdersForCustomer({ email, phone, limit = 20 }) {
   }
 
   try {
-    let customerQuery = client
-      .from("customers")
-      .select("id, name, phone, email, address, address_parts")
-      .order("id", { ascending: false })
-      .limit(5);
-
-    if (safeEmail && safePhone) {
-      customerQuery = customerQuery.eq("email", safeEmail).eq("phone", safePhone);
-    } else if (safeEmail) {
-      customerQuery = customerQuery.eq("email", safeEmail);
-    } else {
-      customerQuery = customerQuery.eq("phone", safePhone);
-    }
-
-    const { data: customers, error: customerError } = await customerQuery;
-
-    if (customerError) {
-      return { ok: false, error: toSafeMessage(customerError), code: customerError.code || "customer_lookup_failed" };
-    }
-
-    const customerIds = Array.isArray(customers) ? customers.map((row) => row.id).filter(Boolean) : [];
-
-    if (!customerIds.length) {
-      return { ok: true, orders: [] };
-    }
-
-    const { data: orderRows, error: orderError } = await client
+    let orderQuery = client
       .from("orders")
       .select(
-        `
-        id,
-        order_id,
-        status,
-        subtotal,
-        total_amount,
-        currency,
-        order_at,
-        payment_id,
-        cart_items,
-        customers:customer_id (name, email, phone, address, address_parts),
-        order_items (product_id, name, category, image, unit_price, quantity, line_total),
-        order_status_events (status, at, created_at)
-      `
+        "id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, shipping_address, payment_status, order_status"
       )
-      .in("customer_id", customerIds)
-      .order("order_at", { ascending: false })
+      .order("created_at", { ascending: false })
       .limit(Math.min(50, Math.max(1, Number(limit) || 20)));
 
+    if (safeEmail && safePhone) {
+      orderQuery = orderQuery.eq("customer_email", safeEmail).eq("phone", safePhone);
+    } else if (safeEmail) {
+      orderQuery = orderQuery.eq("customer_email", safeEmail);
+    } else {
+      orderQuery = orderQuery.eq("phone", safePhone);
+    }
+
+    const { data: orderRows, error: orderError } = await orderQuery;
+
     if (orderError) {
+      console.warn("[Supabase] Flat orders lookup failed", toSupabaseErrorDetails(orderError));
       return { ok: false, error: toSafeMessage(orderError), code: orderError.code || "orders_lookup_failed" };
     }
 
-    const orders = (orderRows || []).map((row) => {
-      const customer = row.customers || {};
-      const statusEvents = Array.isArray(row.order_status_events) ? row.order_status_events : [];
-      const orderItems = Array.isArray(row.order_items) ? row.order_items : [];
-
-      return buildOrderLikeObject({
-        orderDraft: {
-          id: row.order_id,
-          status: normalizeStatus(row.status),
-          subtotal: row.subtotal,
-          totalAmount: row.total_amount,
-          createdAt: row.order_at,
-          payment: { id: row.payment_id, provider: "Razorpay" },
-          buyer: {
-            name: customer.name,
-            email: customer.email,
-            phone: customer.phone,
-            address: customer.address,
-            addressParts: customer.address_parts,
-          },
-          items: orderItems.map((item) => ({
-            id: item.product_id,
-            name: item.name,
-            category: item.category,
-            image: item.image,
-            price: Number(item.unit_price || 0),
-            quantity: Number(item.quantity || 1),
-            lineTotal: Number(item.line_total || 0),
-          })),
-        },
-        paymentId: row.payment_id,
-        customer,
-        statusEvents,
-        orderItems,
-        orderAtIso: row.order_at,
-      });
-    });
+    const orders = (orderRows || []).map(orderFromFlatOrderRow);
 
     return { ok: true, orders };
   } catch (error) {
@@ -586,22 +596,7 @@ async function fetchOrderByOrderId(orderId) {
   try {
     const { data: row, error } = await client
       .from("orders")
-      .select(
-        `
-        id,
-        order_id,
-        status,
-        subtotal,
-        total_amount,
-        currency,
-        order_at,
-        payment_id,
-        cart_items,
-        customers:customer_id (name, email, phone, address, address_parts),
-        order_items (product_id, name, category, image, unit_price, quantity, line_total),
-        order_status_events (status, at, created_at)
-      `
-      )
+      .select("id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, shipping_address, payment_status, order_status")
       .eq("order_id", safeOrderId)
       .maybeSingle();
 
@@ -613,41 +608,7 @@ async function fetchOrderByOrderId(orderId) {
       return { ok: true, order: null };
     }
 
-    const customer = row.customers || {};
-    const statusEvents = Array.isArray(row.order_status_events) ? row.order_status_events : [];
-    const orderItems = Array.isArray(row.order_items) ? row.order_items : [];
-
-    const order = buildOrderLikeObject({
-      orderDraft: {
-        id: row.order_id,
-        status: normalizeStatus(row.status),
-        subtotal: row.subtotal,
-        totalAmount: row.total_amount,
-        createdAt: row.order_at,
-        payment: { id: row.payment_id, provider: "Razorpay" },
-        buyer: {
-          name: customer.name,
-          email: customer.email,
-          phone: customer.phone,
-          address: customer.address,
-          addressParts: customer.address_parts,
-        },
-        items: orderItems.map((item) => ({
-          id: item.product_id,
-          name: item.name,
-          category: item.category,
-          image: item.image,
-          price: Number(item.unit_price || 0),
-          quantity: Number(item.quantity || 1),
-          lineTotal: Number(item.line_total || 0),
-        })),
-      },
-      paymentId: row.payment_id,
-      customer,
-      statusEvents,
-      orderItems,
-      orderAtIso: row.order_at,
-    });
+    const order = orderFromFlatOrderRow(row);
 
     return { ok: true, order };
   } catch (error) {

@@ -1,22 +1,24 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-const SUPABASE_URL = window.SUPABASE_URL;
-const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY;
-
 let supabaseClient = null;
 
+function getSupabaseConfig() {
+  return {
+    url: typeof window.SUPABASE_URL === "string" ? window.SUPABASE_URL.trim() : "",
+    anonKey: typeof window.SUPABASE_ANON_KEY === "string" ? window.SUPABASE_ANON_KEY.trim() : "",
+  };
+}
+
 function isConfigured() {
-  return Boolean(
-    SUPABASE_URL &&
-      SUPABASE_ANON_KEY &&
-      SUPABASE_URL !== "YOUR_SUPABASE_URL" &&
-      SUPABASE_ANON_KEY !== "YOUR_SUPABASE_ANON_KEY"
-  );
+  const { url, anonKey } = getSupabaseConfig();
+  return Boolean(url && anonKey);
 }
 
 function getClient() {
   if (!supabaseClient) {
-    supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    const { url, anonKey } = getSupabaseConfig();
+    console.log("Supabase URL:", url);
+    supabaseClient = createClient(url, anonKey, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
@@ -68,7 +70,7 @@ async function listProducts({ limit = 100 } = {}) {
   }
 }
 
-async function placeOrder({ productId, customerName, customerEmail, quantity }) {
+async function placeOrder({ productId, customerName, customerEmail, customerPhone = "", shippingAddress = "", quantity }) {
   if (!isConfigured()) {
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
   }
@@ -76,6 +78,8 @@ async function placeOrder({ productId, customerName, customerEmail, quantity }) 
   const safeProductId = String(productId || "").trim();
   const safeCustomerName = String(customerName || "").trim();
   const safeCustomerEmail = String(customerEmail || "").trim();
+  const safeCustomerPhone = String(customerPhone || "").trim();
+  const safeShippingAddress = String(shippingAddress || "").trim();
   const safeQuantity = Number(quantity || 0);
 
   if (!safeProductId) {
@@ -93,19 +97,23 @@ async function placeOrder({ productId, customerName, customerEmail, quantity }) 
   const client = getClient();
 
   try {
-    const { data, error } = await client.rpc("place_order", {
-      p_product_id: safeProductId,
+    const { data, error } = await client.rpc("place_order_cart", {
       p_customer_name: safeCustomerName,
       p_customer_email: safeCustomerEmail,
-      p_quantity: Math.floor(safeQuantity),
+      p_phone: safeCustomerPhone,
+      p_shipping_address: safeShippingAddress,
+      p_items: [{ product_id: safeProductId, quantity: Math.floor(safeQuantity) }],
+      p_payment_status: "Paid",
     });
 
     if (error) {
-      return { ok: false, error: toSafeMessage(error), code: error.code || "place_order_failed" };
+      console.error("Supabase connection failed:", error);
+      return { ok: false, error: toSafeMessage(error), code: error.code || "place_order_cart_failed" };
     }
 
     return { ok: true, order: data };
   } catch (error) {
+    console.error("Supabase connection failed:", error);
     return { ok: false, error: toSafeMessage(error), code: "unexpected_error" };
   }
 }
@@ -115,4 +123,3 @@ window.EcommerceSupabase = {
   listProducts,
   placeOrder,
 };
-

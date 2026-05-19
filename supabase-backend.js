@@ -1,8 +1,5 @@
 import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm";
 
-const SUPABASE_URL = window.SUPABASE_URL;
-const SUPABASE_ANON_KEY = window.SUPABASE_ANON_KEY;
-
 let supabaseClient = null;
 
 const ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
@@ -12,12 +9,17 @@ console.log("[Supabase] Backend init", {
   keyPresent: !!window.SUPABASE_ANON_KEY,
 });
 
+function getSupabaseConfig() {
+  return {
+    url: typeof window.SUPABASE_URL === "string" ? window.SUPABASE_URL.trim() : "",
+    anonKey: typeof window.SUPABASE_ANON_KEY === "string" ? window.SUPABASE_ANON_KEY.trim() : "",
+  };
+}
+
 function isConfigured() {
+  const { url, anonKey } = getSupabaseConfig();
   return Boolean(
-    SUPABASE_URL &&
-      SUPABASE_ANON_KEY &&
-      SUPABASE_URL !== "YOUR_SUPABASE_URL" &&
-      SUPABASE_ANON_KEY !== "YOUR_SUPABASE_ANON_KEY"
+    url && anonKey
   );
 }
 
@@ -30,11 +32,13 @@ function maskValue(value) {
 
 function getClient() {
   if (!supabaseClient) {
+    const { url, anonKey } = getSupabaseConfig();
     console.info("[Supabase] Initializing client", {
-      url: SUPABASE_URL || "",
-      anonKey: SUPABASE_ANON_KEY ? maskValue(SUPABASE_ANON_KEY) : "",
+      url: url || "",
+      anonKey: anonKey ? maskValue(anonKey) : "",
     });
-    supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    // Use window.* globals so GitHub Pages deployments work reliably.
+    supabaseClient = createClient(window.SUPABASE_URL, window.SUPABASE_ANON_KEY, {
       auth: {
         persistSession: false,
         autoRefreshToken: false,
@@ -229,14 +233,14 @@ async function findOrCreateCustomer(client, buyer) {
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   if (!isConfigured()) {
     console.warn("[Supabase] Not configured", {
-      url: SUPABASE_URL || "",
-      anonKeyPresent: Boolean(SUPABASE_ANON_KEY),
+      url: window.SUPABASE_URL || "",
+      anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY),
     });
     return {
       ok: false,
       skipped: true,
       reason: "Supabase is not configured.",
-      debug: { supabaseUrl: SUPABASE_URL || "", anonKeyPresent: Boolean(SUPABASE_ANON_KEY) },
+      debug: { supabaseUrl: window.SUPABASE_URL || "", anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY) },
     };
   }
 

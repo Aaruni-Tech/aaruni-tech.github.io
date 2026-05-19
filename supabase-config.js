@@ -4,11 +4,11 @@
 
   window.SUPABASE_URL =
     LOCAL_URL ||
-    "https://YOUR_PROJECT.supabase.co";
+    "https://cnsmgxgkxgbeumnvidpk.supabase.co";
 
   window.SUPABASE_ANON_KEY =
     LOCAL_KEY ||
-    "YOUR_SUPABASE_ANON_KEY";
+    "sb_publishable_pUKXR4zuaQSg9UA5t5Oz9Q_sR4mCiI0";
 
   console.log("[Supabase] Public config loaded", {
     hasUrl: !!window.SUPABASE_URL,

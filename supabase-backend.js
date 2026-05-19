@@ -84,6 +84,45 @@ function toSupabaseErrorDetails(error) {
   };
 }
 
+function isMissingColumnError(errorDetails, columnName) {
+  if (!errorDetails) return false;
+  const message = String(errorDetails.message || "");
+  return message.includes(`'${columnName}'`) && message.toLowerCase().includes("could not find");
+}
+
+function isMissingTableError(errorDetails, tableName) {
+  if (!errorDetails) return false;
+  const message = String(errorDetails.message || "");
+  return message.includes(`table`) && message.includes(tableName) && message.toLowerCase().includes("could not find");
+}
+
+function isMissingFunctionError(errorDetails, fnName) {
+  if (!errorDetails) return false;
+  const message = String(errorDetails.message || "");
+  return message.includes(fnName) && message.toLowerCase().includes("could not find function");
+}
+
+async function insertWithFallback({ client, table, payloads, select }) {
+  for (let index = 0; index < payloads.length; index += 1) {
+    const payload = payloads[index];
+    try {
+      const query = client.from(table).insert(payload);
+      const { data, error } = select ? await query.select(select).single() : await query;
+
+      if (!error) {
+        return { ok: true, data, usedIndex: index };
+      }
+
+      const details = toSupabaseErrorDetails(error);
+      console.warn(`[Supabase] Insert into ${table} failed (variant ${index + 1}/${payloads.length})`, details);
+    } catch (error) {
+      console.warn(`[Supabase] Insert into ${table} threw (variant ${index + 1}/${payloads.length})`, error);
+    }
+  }
+
+  return { ok: false };
+}
+
 function normalizeStatus(value) {
   if (!value) {
     return "Order Confirmed";
@@ -268,16 +307,27 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
     // Best-effort: store customer profile in `users` if the ecommerce schema is installed.
     // This is optional and safe to ignore if the table doesn't exist or RLS blocks it.
     try {
-      const { error: userInsertError } = await client.from("users").insert({
-        full_name: buyer.name || "Customer",
-        email: buyer.email || null,
-        phone: buyer.phone || null,
-        shipping_address: buyer.address || "",
+      const userInsert = await insertWithFallback({
+        client,
+        table: "users",
+        payloads: [
+          {
+            full_name: buyer.name || "Customer",
+            email: buyer.email || null,
+            phone: buyer.phone || null,
+            shipping_address: buyer.address || "",
+          },
+          {
+            name: buyer.name || "Customer",
+            email: buyer.email || null,
+            phone: buyer.phone || null,
+            shipping_address: buyer.address || "",
+          },
+        ],
       });
-      if (userInsertError) {
-        console.warn("[Supabase] users insert failed", toSupabaseErrorDetails(userInsertError));
-      } else {
-        console.info("[Supabase] users insert ok");
+
+      if (userInsert.ok) {
+        console.info("[Supabase] users insert ok", { variant: userInsert.usedIndex });
       }
     } catch (error) {
       console.warn("[Supabase] users insert threw", error);
@@ -347,7 +397,12 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         }
 
         if (rpcError) {
-          console.warn("[Supabase] RPC place_order_cart failed", toSupabaseErrorDetails(rpcError));
+          const details = toSupabaseErrorDetails(rpcError);
+          console.warn("[Supabase] RPC place_order_cart failed", details);
+
+          if (isMissingFunctionError(details, "place_order_cart")) {
+            console.warn("[Supabase] Missing RPC place_order_cart. Install it via SQL migration.");
+          }
         }
       }
     } catch (error) {
@@ -368,24 +423,32 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         totalQty,
         totalPrice: Number(orderDraft.totalAmount || 0),
       });
-      const { data: v2Row, error: v2Error } = await client
-        .from("orders")
-        .insert({
-          customer_name: buyer.name || "Customer",
-          customer_email: buyer.email || null,
-          phone: buyer.phone || null,
-          product_name: productsText || "Cart items",
-          quantity: totalQty,
-          total_price: Number(orderDraft.totalAmount || 0),
-          shipping_address: buyer.address || "",
-          payment_status: paymentId ? "Paid" : "Pending",
-          order_status: normalizeStatus(orderDraft.status || "Order Confirmed"),
-          order_id: orderDraft.id,
-        })
-        .select("id, order_id, created_at, order_status, payment_status, total_price")
-        .single();
+      const basePayload = {
+        customer_name: buyer.name || "Customer",
+        customer_email: buyer.email || null,
+        phone: buyer.phone || null,
+        product_name: productsText || "Cart items",
+        quantity: totalQty,
+        total_price: Number(orderDraft.totalAmount || 0),
+        shipping_address: buyer.address || "",
+        payment_status: paymentId ? "Paid" : "Pending",
+        order_id: orderDraft.id,
+      };
 
-      if (!v2Error && v2Row && v2Row.order_id) {
+      const v2Insert = await insertWithFallback({
+        client,
+        table: "orders",
+        select: "id, order_id, created_at, order_status, status, payment_status, total_price",
+        payloads: [
+          { ...basePayload, order_status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          { ...basePayload, status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          { ...basePayload },
+        ],
+      });
+
+      const v2Row = v2Insert.ok ? v2Insert.data : null;
+
+      if (v2Row && v2Row.order_id) {
         console.info("[Supabase] v2 orders insert ok", { v2Row });
         const orderAtIso = v2Row.created_at ? new Date(v2Row.created_at).toISOString() : createdAtIso;
         const orderAtDate = new Date(orderAtIso);
@@ -393,7 +456,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           ...orderDraft,
           id: v2Row.order_id,
           invoiceNumber: orderDraft.invoiceNumber || `INV-${v2Row.order_id}`,
-          status: normalizeStatus(v2Row.order_status || "Order Confirmed"),
+          status: normalizeStatus(v2Row.order_status || v2Row.status || "Order Confirmed"),
           createdAt: orderAtIso,
           orderDate: new Intl.DateTimeFormat("en-IN", {
             day: "2-digit",
@@ -410,7 +473,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           },
           statusHistory: [
             {
-              status: normalizeStatus(v2Row.order_status || "Order Confirmed"),
+              status: normalizeStatus(v2Row.order_status || v2Row.status || "Order Confirmed"),
               at: orderAtIso,
             },
           ],
@@ -423,15 +486,24 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
 
         return { ok: true, order: upgradedOrder };
       }
-
-      if (v2Error) {
-        console.warn("[Supabase] v2 orders insert failed", toSupabaseErrorDetails(v2Error));
-      }
     } catch (error) {
       console.warn("[Supabase] v2 orders insert threw", error);
     }
 
-    const customerResult = await findOrCreateCustomer(client, buyer);
+    // Legacy schema path (requires customers/orders/order_items tables). If the project isn't set up,
+    // fail gracefully with a clear message instead of throwing.
+    let customerResult;
+    try {
+      customerResult = await findOrCreateCustomer(client, buyer);
+    } catch (error) {
+      console.warn("[Supabase] customers table missing or blocked", error);
+      return {
+        ok: false,
+        error: "Supabase legacy tables are missing (customers/orders/order_items). Install the provided SQL schema.",
+        code: "legacy_schema_missing",
+        debug: { stage: "customers", error },
+      };
+    }
 
     if (!customerResult.ok) {
       return customerResult;

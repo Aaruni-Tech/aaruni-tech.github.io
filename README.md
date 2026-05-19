@@ -88,3 +88,6 @@ For a minimal startup-style catalog + orders backend (with stock reduction), use
 - `docs/supabase-ecommerce-starter.sql`
 - `docs/supabase-ecommerce-orders-v2.sql` (cart checkout + admin-order fields)
 - `docs/supabase-ecommerce-setup.md`
+
+If you see Supabase 400/404 errors about missing columns/functions/tables during checkout, run:
+- `docs/supabase-schema-fix-migration.sql`

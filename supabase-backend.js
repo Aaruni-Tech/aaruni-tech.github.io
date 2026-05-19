@@ -299,6 +299,14 @@ function orderFromFlatOrderRow(row) {
   });
 }
 
+function normalizeRpcOrderPayload(rpcOrder) {
+  if (Array.isArray(rpcOrder)) {
+    return rpcOrder[0] || null;
+  }
+
+  return rpcOrder || null;
+}
+
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   if (!isConfigured()) {
     console.warn("[Supabase] Not configured", {
@@ -374,15 +382,43 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         .filter((item) => item.product_id && item.quantity > 0);
 
       if (cartPayload.length) {
-        console.info("[Supabase] Calling RPC place_order_cart", { cartPayload });
-        const { data: rpcOrder, error: rpcError } = await client.rpc("place_order_cart", {
-          p_customer_name: buyer.name || "Customer",
+        const liveRpcPayload = {
           p_customer_email: buyer.email || "",
-          p_phone: buyer.phone || "",
-          p_shipping_address: buyer.address || "",
-          p_items: cartPayload,
+          p_customer_name: buyer.name || "Customer",
+          p_order_id: orderDraft.id,
+          p_payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
           p_payment_status: paymentId ? "Paid" : "Pending",
-        });
+          p_phone: buyer.phone || "",
+          p_products: items.map((item) => ({
+            product_id: item.id || "",
+            id: item.id || "",
+            name: item.name || "",
+            quantity: Number(item.quantity || 0),
+            price: Number(item.price || 0),
+            line_total: Number(item.lineTotal || 0),
+          })),
+          p_shipping_address: buyer.address || "",
+          p_total_amount: Number(orderDraft.totalAmount || 0),
+        };
+
+        console.info("[Supabase] Calling RPC place_order_cart (production signature)", liveRpcPayload);
+        let rpcResponse = await client.rpc("place_order_cart", liveRpcPayload);
+
+        if (rpcResponse.error) {
+          console.warn("[Supabase] production-signature place_order_cart failed", toSupabaseErrorDetails(rpcResponse.error));
+          console.info("[Supabase] Calling RPC place_order_cart (schema-fix signature)", { cartPayload });
+          rpcResponse = await client.rpc("place_order_cart", {
+            p_customer_name: buyer.name || "Customer",
+            p_customer_email: buyer.email || "",
+            p_phone: buyer.phone || "",
+            p_shipping_address: buyer.address || "",
+            p_items: cartPayload,
+            p_payment_status: paymentId ? "Paid" : "Pending",
+          });
+        }
+
+        const rpcOrder = normalizeRpcOrderPayload(rpcResponse.data);
+        const rpcError = rpcResponse.error;
 
         if (!rpcError && rpcOrder && rpcOrder.order_id) {
           console.info("[Supabase] RPC place_order_cart ok", { rpcOrder });

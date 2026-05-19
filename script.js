@@ -420,6 +420,17 @@ function startRazorpayCheckout() {
     return;
   }
 
+  console.info("[Checkout] Starting Razorpay checkout", {
+    cartQty: getCartQuantity(),
+    amount,
+    buyer: {
+      name: signupProfile.name,
+      email: signupProfile.email,
+      phone: signupProfile.phone,
+      address: getDeliveryAddress(signupProfile),
+    },
+  });
+
   const amountInPaise = Math.round(amount * 100);
 
   const checkout = new window.Razorpay({
@@ -441,7 +452,9 @@ function startRazorpayCheckout() {
       color: "#c51d63",
     },
     handler(response) {
+      console.info("[Razorpay] Success handler invoked", { response });
       const paymentId = response && response.razorpay_payment_id ? response.razorpay_payment_id : "";
+      console.info("[Razorpay] Payment ID", { paymentId });
       const orderDraft = window.AaruniOrders
         ? window.AaruniOrders.createOrder({
             cartItems: cartItems.map((item) => ({ ...item })),
@@ -451,6 +464,13 @@ function startRazorpayCheckout() {
             supportEmail: RAZORPAY_SUPPORT_EMAIL,
           })
         : null;
+
+      console.info("[Checkout] Order draft created", {
+        hasOrderDraft: Boolean(orderDraft),
+        orderId: orderDraft && orderDraft.id,
+        items: orderDraft && orderDraft.items ? orderDraft.items.length : 0,
+        totalAmount: orderDraft && orderDraft.totalAmount,
+      });
 
       const finalizeOrder = async () => {
         if (!orderDraft || !window.AaruniOrders) {
@@ -463,11 +483,18 @@ function startRazorpayCheckout() {
           window.AaruniSupabaseBackend.isConfigured &&
           window.AaruniSupabaseBackend.isConfigured()
         ) {
+          console.info("[Supabase] Attempting to save order after payment", {
+            configured: true,
+            paymentId,
+            draftId: orderDraft.id,
+          });
           try {
             const result = await window.AaruniSupabaseBackend.saveOrderAfterPayment({
               paymentId,
               orderDraft,
             });
+
+            console.info("[Supabase] saveOrderAfterPayment result", result);
 
             if (result && result.ok && result.order) {
               window.AaruniOrders.saveOrder(result.order);
@@ -475,7 +502,9 @@ function startRazorpayCheckout() {
 
               if (window.AaruniEmail && window.AaruniEmail.isEmailConfigured && window.AaruniEmail.isEmailConfigured()) {
                 try {
+                  console.info("[EmailJS] Sending order emails", { orderId: result.order.id });
                   const emailResult = await window.AaruniEmail.sendOrderEmails(result.order);
+                  console.info("[EmailJS] sendOrderEmails result", emailResult);
 
                   if (emailResult && emailResult.ok) {
                     showToast("Order confirmation email sent.");
@@ -503,14 +532,23 @@ function startRazorpayCheckout() {
 
             console.warn("Supabase order save failed.", result);
             window.AaruniOrders.saveOrder(orderDraft);
-            showToast("Payment received, but order could not be saved to the server. Saved on this device.");
+            showToast(`Payment received, but order could not be saved to the server. ${result && result.error ? String(result.error).slice(0, 140) : ""}`);
             return;
           } catch (error) {
             console.warn("Supabase order save failed.", error);
             window.AaruniOrders.saveOrder(orderDraft);
-            showToast("Payment received, but order could not be saved to the server. Saved on this device.");
+            const message = error && error.message ? String(error.message) : "Supabase save failed.";
+            showToast(`Payment received, but order could not be saved to the server. ${message.slice(0, 140)}`);
             return;
           }
+        } else {
+          console.warn("[Supabase] Not configured or backend missing", {
+            hasBackend: Boolean(window.AaruniSupabaseBackend),
+            configured:
+              Boolean(window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.isConfigured && window.AaruniSupabaseBackend.isConfigured()),
+            supabaseUrl: window.SUPABASE_URL || "",
+            anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY),
+          });
         }
 
         if (window.AaruniBackend && window.AaruniBackend.isConfigured && window.AaruniBackend.isConfigured()) {

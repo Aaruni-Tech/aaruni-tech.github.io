@@ -16,8 +16,19 @@ function isConfigured() {
   );
 }
 
+function maskValue(value) {
+  const raw = String(value || "");
+  if (!raw) return "";
+  if (raw.length <= 8) return "***";
+  return `${raw.slice(0, 4)}***${raw.slice(-4)}`;
+}
+
 function getClient() {
   if (!supabaseClient) {
+    console.info("[Supabase] Initializing client", {
+      url: SUPABASE_URL || "",
+      anonKey: SUPABASE_ANON_KEY ? maskValue(SUPABASE_ANON_KEY) : "",
+    });
     supabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
       auth: {
         persistSession: false,
@@ -44,6 +55,24 @@ function toSafeMessage(error) {
   }
 
   return "Unexpected error.";
+}
+
+function toSupabaseErrorDetails(error) {
+  if (!error) {
+    return null;
+  }
+
+  if (typeof error === "string") {
+    return { message: error };
+  }
+
+  return {
+    message: toSafeMessage(error),
+    code: error.code || "",
+    details: error.details || "",
+    hint: error.hint || "",
+    raw: error,
+  };
 }
 
 function normalizeStatus(value) {
@@ -194,7 +223,16 @@ async function findOrCreateCustomer(client, buyer) {
 
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   if (!isConfigured()) {
-    return { ok: false, skipped: true, reason: "Supabase is not configured." };
+    console.warn("[Supabase] Not configured", {
+      url: SUPABASE_URL || "",
+      anonKeyPresent: Boolean(SUPABASE_ANON_KEY),
+    });
+    return {
+      ok: false,
+      skipped: true,
+      reason: "Supabase is not configured.",
+      debug: { supabaseUrl: SUPABASE_URL || "", anonKeyPresent: Boolean(SUPABASE_ANON_KEY) },
+    };
   }
 
   if (!orderDraft) {
@@ -207,17 +245,33 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
     const buyer = orderDraft.buyer || {};
     const createdAtIso = orderDraft.createdAt || new Date().toISOString();
 
+    console.info("[Supabase] saveOrderAfterPayment start", {
+      paymentId,
+      draftId: orderDraft.id,
+      items: Array.isArray(orderDraft.items) ? orderDraft.items.length : 0,
+      buyer: {
+        name: buyer.name,
+        email: buyer.email,
+        phone: buyer.phone,
+      },
+    });
+
     // Best-effort: store customer profile in `users` if the ecommerce schema is installed.
     // This is optional and safe to ignore if the table doesn't exist or RLS blocks it.
     try {
-      await client.from("users").insert({
+      const { error: userInsertError } = await client.from("users").insert({
         full_name: buyer.name || "Customer",
         email: buyer.email || null,
         phone: buyer.phone || null,
         shipping_address: buyer.address || "",
       });
+      if (userInsertError) {
+        console.warn("[Supabase] users insert failed", toSupabaseErrorDetails(userInsertError));
+      } else {
+        console.info("[Supabase] users insert ok");
+      }
     } catch (error) {
-      // ignore
+      console.warn("[Supabase] users insert threw", error);
     }
 
     // Prefer the stock-safe cart RPC if present (orders v2).
@@ -231,6 +285,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         .filter((item) => item.product_id && item.quantity > 0);
 
       if (cartPayload.length) {
+        console.info("[Supabase] Calling RPC place_order_cart", { cartPayload });
         const { data: rpcOrder, error: rpcError } = await client.rpc("place_order_cart", {
           p_customer_name: buyer.name || "Customer",
           p_customer_email: buyer.email || "",
@@ -241,6 +296,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         });
 
         if (!rpcError && rpcOrder && rpcOrder.order_id) {
+          console.info("[Supabase] RPC place_order_cart ok", { rpcOrder });
           const orderId = rpcOrder.order_id;
           const orderAt = rpcOrder.created_at || createdAtIso;
           const orderAtIso = new Date(orderAt).toISOString();
@@ -282,11 +338,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         }
 
         if (rpcError) {
-          console.warn("Supabase RPC place_order_cart failed. Falling back to legacy order save.", rpcError);
+          console.warn("[Supabase] RPC place_order_cart failed", toSupabaseErrorDetails(rpcError));
         }
       }
     } catch (error) {
-      console.warn("Supabase RPC place_order_cart failed. Falling back to legacy order save.", error);
+      console.warn("[Supabase] RPC place_order_cart threw", error);
     }
 
     // If the v2 `orders` table exists but RPC is not installed, at least store the order row (no stock decrement).
@@ -298,6 +354,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         .join(", ");
       const totalQty = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || Number(orderDraft.totalQuantity || 0) || 1;
 
+      console.info("[Supabase] Trying direct insert into v2 orders table (no stock decrement)", {
+        productsText,
+        totalQty,
+        totalPrice: Number(orderDraft.totalAmount || 0),
+      });
       const { data: v2Row, error: v2Error } = await client
         .from("orders")
         .insert({
@@ -316,6 +377,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         .single();
 
       if (!v2Error && v2Row && v2Row.order_id) {
+        console.info("[Supabase] v2 orders insert ok", { v2Row });
         const orderAtIso = v2Row.created_at ? new Date(v2Row.created_at).toISOString() : createdAtIso;
         const orderAtDate = new Date(orderAtIso);
         const upgradedOrder = {
@@ -352,8 +414,12 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
 
         return { ok: true, order: upgradedOrder };
       }
+
+      if (v2Error) {
+        console.warn("[Supabase] v2 orders insert failed", toSupabaseErrorDetails(v2Error));
+      }
     } catch (error) {
-      // Ignore and try legacy schema.
+      console.warn("[Supabase] v2 orders insert threw", error);
     }
 
     const customerResult = await findOrCreateCustomer(client, buyer);
@@ -381,7 +447,13 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       .single();
 
     if (orderError) {
-      return { ok: false, error: toSafeMessage(orderError), code: orderError.code || "order_insert_failed" };
+      console.warn("[Supabase] legacy orders insert failed", toSupabaseErrorDetails(orderError));
+      return {
+        ok: false,
+        error: toSafeMessage(orderError),
+        code: orderError.code || "order_insert_failed",
+        debug: { stage: "legacy_orders_insert", details: toSupabaseErrorDetails(orderError) },
+      };
     }
 
     // Best-effort: seed status timeline.
@@ -411,7 +483,13 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       const { error: itemsError } = await client.from("order_items").insert(orderItemsPayload);
 
       if (itemsError) {
-        return { ok: false, error: toSafeMessage(itemsError), code: itemsError.code || "order_items_insert_failed" };
+        console.warn("[Supabase] legacy order_items insert failed", toSupabaseErrorDetails(itemsError));
+        return {
+          ok: false,
+          error: toSafeMessage(itemsError),
+          code: itemsError.code || "order_items_insert_failed",
+          debug: { stage: "legacy_order_items_insert", details: toSupabaseErrorDetails(itemsError) },
+        };
       }
     }
 
@@ -431,7 +509,8 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       },
     };
   } catch (error) {
-    return { ok: false, error: toSafeMessage(error), code: "unexpected_error" };
+    console.warn("[Supabase] saveOrderAfterPayment threw", error);
+    return { ok: false, error: toSafeMessage(error), code: "unexpected_error", debug: { stage: "catch", error } };
   }
 }
 

@@ -224,51 +224,6 @@ function buildOrderLikeObject({ orderDraft, paymentId, customer, statusEvents, o
   };
 }
 
-async function findOrCreateCustomer(client, buyer) {
-  const email = buyer && buyer.email ? String(buyer.email).trim() : "";
-  const phone = buyer && buyer.phone ? String(buyer.phone).trim() : "";
-
-  if (email || phone) {
-    try {
-      let query = client.from("customers").select("id, name, phone, email, address, address_parts").limit(1);
-
-      if (email && phone) {
-        query = query.eq("email", email).eq("phone", phone);
-      } else if (email) {
-        query = query.eq("email", email);
-      } else if (phone) {
-        query = query.eq("phone", phone);
-      }
-
-      const { data: existing, error } = await query.maybeSingle();
-
-      if (!error && existing && existing.id) {
-        return { ok: true, customer: existing };
-      }
-    } catch (error) {
-      // Non-fatal: fall back to insert.
-    }
-  }
-
-  const { data: created, error: createError } = await client
-    .from("customers")
-    .insert({
-      name: (buyer && buyer.name) || "Customer",
-      phone: phone || "",
-      email: email || null,
-      address: (buyer && buyer.address) || "",
-      address_parts: Array.isArray(buyer && buyer.addressParts) ? buyer.addressParts : [],
-    })
-    .select("id, name, phone, email, address, address_parts")
-    .single();
-
-  if (createError) {
-    return { ok: false, error: toSafeMessage(createError), code: createError.code || "customer_insert_failed" };
-  }
-
-  return { ok: true, customer: created };
-}
-
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   if (!isConfigured()) {
     console.warn("[Supabase] Not configured", {
@@ -490,104 +445,15 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       console.warn("[Supabase] v2 orders insert threw", error);
     }
 
-    // Legacy schema path (requires customers/orders/order_items tables). If the project isn't set up,
-    // fail gracefully with a clear message instead of throwing.
-    let customerResult;
-    try {
-      customerResult = await findOrCreateCustomer(client, buyer);
-    } catch (error) {
-      console.warn("[Supabase] customers table missing or blocked", error);
-      return {
-        ok: false,
-        error: "Supabase legacy tables are missing (customers/orders/order_items). Install the provided SQL schema.",
-        code: "legacy_schema_missing",
-        debug: { stage: "customers", error },
-      };
-    }
-
-    if (!customerResult.ok) {
-      return customerResult;
-    }
-
-    const customerRow = customerResult.customer;
-
-    const { data: orderRow, error: orderError } = await client
-      .from("orders")
-      .insert({
-        order_id: orderDraft.id,
-        customer_id: customerRow.id,
-        payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
-        status: normalizeStatus(orderDraft.status),
-        subtotal: Number(orderDraft.subtotal || 0),
-        total_amount: Number(orderDraft.totalAmount || 0),
-        currency: "INR",
-        order_at: createdAtIso,
-        cart_items: Array.isArray(orderDraft.items) ? orderDraft.items : [],
-      })
-      .select("id, order_id")
-      .single();
-
-    if (orderError) {
-      console.warn("[Supabase] legacy orders insert failed", toSupabaseErrorDetails(orderError));
-      return {
-        ok: false,
-        error: toSafeMessage(orderError),
-        code: orderError.code || "order_insert_failed",
-        debug: { stage: "legacy_orders_insert", details: toSupabaseErrorDetails(orderError) },
-      };
-    }
-
-    // Best-effort: seed status timeline.
-    try {
-      await client.from("order_status_events").insert({
-        order_id: orderRow.id,
-        status: normalizeStatus(orderDraft.status),
-        at: createdAtIso,
-      });
-    } catch (error) {
-      // ignore: timeline can be managed later.
-    }
-
-    const items = Array.isArray(orderDraft.items) ? orderDraft.items : [];
-    const orderItemsPayload = items.map((item) => ({
-      order_id: orderRow.id,
-      product_id: item.id || null,
-      name: item.name || "",
-      category: item.category || "",
-      image: item.image || "",
-      unit_price: Number(item.price || 0),
-      quantity: Number(item.quantity || 1),
-      line_total: Number(item.lineTotal || 0),
-    }));
-
-    if (orderItemsPayload.length) {
-      const { error: itemsError } = await client.from("order_items").insert(orderItemsPayload);
-
-      if (itemsError) {
-        console.warn("[Supabase] legacy order_items insert failed", toSupabaseErrorDetails(itemsError));
-        return {
-          ok: false,
-          error: toSafeMessage(itemsError),
-          code: itemsError.code || "order_items_insert_failed",
-          debug: { stage: "legacy_order_items_insert", details: toSupabaseErrorDetails(itemsError) },
-        };
-      }
-    }
-
+    // Do not attempt legacy `customers/order_items` schema here.
+    // Production checkout should use either:
+    // - RPC `place_order_cart` (preferred), or
+    // - direct insert into v2 `orders` table (fallback).
     return {
-      ok: true,
-      order: {
-        ...orderDraft,
-        payment: {
-          ...(orderDraft.payment || {}),
-          id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "not available",
-        },
-        backend: {
-          provider: "supabase",
-          customerId: customerRow.id,
-          orderRowId: orderRow.id,
-        },
-      },
+      ok: false,
+      error:
+        "Order could not be saved to Supabase. Ensure `place_order_cart` exists or the `orders` table has required columns.",
+      code: "supabase_save_failed",
     };
   } catch (error) {
     console.warn("[Supabase] saveOrderAfterPayment threw", error);

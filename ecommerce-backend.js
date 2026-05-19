@@ -54,11 +54,30 @@ async function listProducts({ limit = 100 } = {}) {
   const client = getClient();
 
   try {
-    const { data, error } = await client
+    let { data, error } = await client
       .from("products")
       .select("id, created_at, product_name, price, image_url, stock, description")
       .order("created_at", { ascending: false })
       .limit(Math.min(500, Math.max(1, Number(limit) || 100)));
+
+    if (error && (error.code === "42703" || error.code === "PGRST204")) {
+      const legacyResult = await client
+        .from("products")
+        .select('"product id", "product name", price, "image url", stock, discription')
+        .limit(Math.min(500, Math.max(1, Number(limit) || 100)));
+      data = Array.isArray(legacyResult.data)
+        ? legacyResult.data.map((product) => ({
+            id: String(product["product id"] || product["product name"] || ""),
+            created_at: "",
+            product_name: product["product name"] || "",
+            price: Number(product.price || 0),
+            image_url: product["image url"] || "",
+            stock: Number(product.stock || 0),
+            description: product.discription || "",
+          }))
+        : legacyResult.data;
+      error = legacyResult.error;
+    }
 
     if (error) {
       return { ok: false, error: toSafeMessage(error), code: error.code || "products_select_failed" };

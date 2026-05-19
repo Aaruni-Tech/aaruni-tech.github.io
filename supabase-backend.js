@@ -258,10 +258,36 @@ function parseOrderProducts(productName, quantity, totalPrice) {
   });
 }
 
+function parseJsonOrderProducts(products, totalAmount) {
+  if (!Array.isArray(products)) {
+    return [];
+  }
+
+  return products
+    .map((item, index) => {
+      const itemQuantity = Number(item.quantity || 0);
+      const itemPrice = Number(item.price || 0);
+      const lineTotal = Number(item.line_total || item.lineTotal || (itemPrice * itemQuantity));
+
+      return {
+        id: item.product_id || item.id || null,
+        name: item.name || item.product_name || "Product",
+        category: "",
+        image: "",
+        price: itemQuantity > 0 && !itemPrice && products.length === 1 ? Number(totalAmount || 0) / itemQuantity : itemPrice,
+        quantity: itemQuantity > 0 ? itemQuantity : 1,
+        lineTotal: lineTotal || (products.length === 1 ? Number(totalAmount || 0) : 0),
+        sortIndex: index,
+      };
+    })
+    .filter((item) => item.name);
+}
+
 function orderFromFlatOrderRow(row) {
   const createdAtIso = row.created_at || new Date().toISOString();
-  const items = parseOrderProducts(row.product_name, row.quantity, row.total_price);
-  const totalAmount = Number(row.total_price || 0);
+  const totalAmount = Number(row.total_price ?? row.total_amount ?? 0);
+  const jsonItems = parseJsonOrderProducts(row.products, totalAmount);
+  const items = jsonItems.length ? jsonItems : parseOrderProducts(row.product_name, row.quantity, totalAmount);
   const status = normalizeStatus(row.order_status || row.status || "Order Confirmed");
 
   return buildOrderLikeObject({
@@ -482,6 +508,14 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         .map((item) => `${item.name || "Product"} x ${Number(item.quantity || 1)}`)
         .filter(Boolean)
         .join(", ");
+      const productsJson = items.map((item) => ({
+        product_id: item.id || "",
+        id: item.id || "",
+        name: item.name || "Product",
+        quantity: Number(item.quantity || 0),
+        price: Number(item.price || 0),
+        line_total: Number(item.lineTotal || 0),
+      }));
       const totalQty = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || Number(orderDraft.totalQuantity || 0) || 1;
 
       console.info("[Supabase] Trying direct insert into v2 orders table (no stock decrement)", {
@@ -496,33 +530,60 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         product_name: productsText || "Cart items",
         quantity: totalQty,
         total_price: Number(orderDraft.totalAmount || 0),
+        total_amount: Number(orderDraft.totalAmount || 0),
+        subtotal: Number(orderDraft.subtotal || orderDraft.totalAmount || 0),
+        products: productsJson,
+        cart_items: productsJson,
         shipping_address: buyer.address || "",
+        payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
         payment_status: paymentId ? "Paid" : "Pending",
         order_id: orderDraft.id,
+      };
+      const liveSchemaPayload = {
+        customer_name: basePayload.customer_name,
+        customer_email: basePayload.customer_email,
+        phone: basePayload.phone,
+        shipping_address: basePayload.shipping_address,
+        payment_id: basePayload.payment_id,
+        payment_status: basePayload.payment_status,
+        order_status: normalizeStatus(orderDraft.status || "Order Confirmed"),
+        order_id: basePayload.order_id,
+        products: productsJson,
+        total_amount: Number(orderDraft.totalAmount || 0),
+      };
+      const liveSchemaMinimalPayload = {
+        customer_name: basePayload.customer_name,
+        customer_email: basePayload.customer_email,
+        phone: basePayload.phone,
+        shipping_address: basePayload.shipping_address,
+        payment_id: basePayload.payment_id,
+        payment_status: basePayload.payment_status,
+        order_id: basePayload.order_id,
+        products: productsJson,
+        total_amount: Number(orderDraft.totalAmount || 0),
       };
 
       const v2Insert = await insertWithFallback({
         client,
         table: "orders",
-        select: "id, order_id, created_at, order_status, status, payment_status, total_price",
         payloads: [
           { ...basePayload, order_status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          liveSchemaPayload,
+          liveSchemaMinimalPayload,
           { ...basePayload, status: normalizeStatus(orderDraft.status || "Order Confirmed") },
           { ...basePayload },
         ],
       });
 
-      const v2Row = v2Insert.ok ? v2Insert.data : null;
-
-      if (v2Row && v2Row.order_id) {
-        console.info("[Supabase] v2 orders insert ok", { v2Row });
-        const orderAtIso = v2Row.created_at ? new Date(v2Row.created_at).toISOString() : createdAtIso;
+      if (v2Insert.ok) {
+        console.info("[Supabase] v2 orders insert ok", { usedIndex: v2Insert.usedIndex });
+        const orderAtIso = createdAtIso;
         const orderAtDate = new Date(orderAtIso);
         const upgradedOrder = {
           ...orderDraft,
-          id: v2Row.order_id,
-          invoiceNumber: orderDraft.invoiceNumber || `INV-${v2Row.order_id}`,
-          status: normalizeStatus(v2Row.order_status || v2Row.status || "Order Confirmed"),
+          id: basePayload.order_id,
+          invoiceNumber: orderDraft.invoiceNumber || `INV-${basePayload.order_id}`,
+          status: normalizeStatus(orderDraft.status || "Order Confirmed"),
           createdAt: orderAtIso,
           orderDate: new Intl.DateTimeFormat("en-IN", {
             day: "2-digit",
@@ -530,23 +591,23 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
             year: "numeric",
           }).format(orderAtDate),
           orderTime: new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit" }).format(orderAtDate),
-          subtotal: Number(v2Row.total_price || orderDraft.subtotal || 0),
-          totalAmount: Number(v2Row.total_price || orderDraft.totalAmount || 0),
+          subtotal: Number(orderDraft.subtotal || 0),
+          totalAmount: Number(orderDraft.totalAmount || 0),
           payment: {
             provider: "Razorpay",
             id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "not available",
-            status: String(v2Row.payment_status || (paymentId ? "Paid" : "Pending")),
+            status: paymentId ? "Paid" : "Pending",
           },
           statusHistory: [
             {
-              status: normalizeStatus(v2Row.order_status || v2Row.status || "Order Confirmed"),
+              status: normalizeStatus(orderDraft.status || "Order Confirmed"),
               at: orderAtIso,
             },
           ],
           backend: {
             provider: "supabase",
             schema: "orders_v2_no_stock",
-            orderRowId: v2Row.id,
+            orderRowId: null,
           },
         };
 
@@ -586,26 +647,39 @@ async function listOrdersForCustomer({ email, phone, limit = 20 }) {
   }
 
   try {
-    let orderQuery = client
-      .from("orders")
-      .select(
-        "id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, shipping_address, payment_status, order_status"
-      )
-      .order("created_at", { ascending: false })
-      .limit(Math.min(50, Math.max(1, Number(limit) || 20)));
+    const buildQuery = (selectColumns) => {
+      let orderQuery = client
+        .from("orders")
+        .select(selectColumns)
+        .order("created_at", { ascending: false })
+        .limit(Math.min(50, Math.max(1, Number(limit) || 20)));
 
-    if (safeEmail && safePhone) {
-      orderQuery = orderQuery.eq("customer_email", safeEmail).eq("phone", safePhone);
-    } else if (safeEmail) {
-      orderQuery = orderQuery.eq("customer_email", safeEmail);
-    } else {
-      orderQuery = orderQuery.eq("phone", safePhone);
+      if (safeEmail && safePhone) {
+        orderQuery = orderQuery.eq("customer_email", safeEmail).eq("phone", safePhone);
+      } else if (safeEmail) {
+        orderQuery = orderQuery.eq("customer_email", safeEmail);
+      } else {
+        orderQuery = orderQuery.eq("phone", safePhone);
+      }
+
+      return orderQuery;
+    };
+
+    let { data: orderRows, error: orderError } = await buildQuery(
+      "id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, total_amount, products, shipping_address, payment_status, order_status"
+    );
+
+    if (orderError && (orderError.code === "42703" || orderError.code === "PGRST204")) {
+      console.info("[Supabase] Retrying orders lookup with compact live schema", toSupabaseErrorDetails(orderError));
+      const compactResult = await buildQuery(
+        "id, created_at, order_id, customer_name, customer_email, phone, products, total_amount, shipping_address, payment_status, order_status"
+      );
+      orderRows = compactResult.data;
+      orderError = compactResult.error;
     }
 
-    const { data: orderRows, error: orderError } = await orderQuery;
-
     if (orderError) {
-      console.warn("[Supabase] Flat orders lookup failed", toSupabaseErrorDetails(orderError));
+      console.info("[Supabase] Orders lookup unavailable; using local order history", toSupabaseErrorDetails(orderError));
       return { ok: false, error: toSafeMessage(orderError), code: orderError.code || "orders_lookup_failed" };
     }
 
@@ -630,11 +704,22 @@ async function fetchOrderByOrderId(orderId) {
   const client = getClient();
 
   try {
-    const { data: row, error } = await client
+    let { data: row, error } = await client
       .from("orders")
-      .select("id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, shipping_address, payment_status, order_status")
+      .select("id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, total_amount, products, shipping_address, payment_status, order_status")
       .eq("order_id", safeOrderId)
       .maybeSingle();
+
+    if (error && (error.code === "42703" || error.code === "PGRST204")) {
+      console.info("[Supabase] Retrying order lookup with compact live schema", toSupabaseErrorDetails(error));
+      const compactResult = await client
+        .from("orders")
+        .select("id, created_at, order_id, customer_name, customer_email, phone, products, total_amount, shipping_address, payment_status, order_status")
+        .eq("order_id", safeOrderId)
+        .maybeSingle();
+      row = compactResult.data;
+      error = compactResult.error;
+    }
 
     if (error) {
       return { ok: false, error: toSafeMessage(error), code: error.code || "order_lookup_failed" };

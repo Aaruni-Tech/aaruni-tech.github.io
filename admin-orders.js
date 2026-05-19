@@ -20,6 +20,20 @@ function formatMoney(value) {
   return `₹${Number(value || 0).toLocaleString("en-IN")}`;
 }
 
+function formatProducts(order) {
+  if (order.product_name) {
+    return `${order.product_name} × ${order.quantity || 1}`;
+  }
+
+  if (Array.isArray(order.products)) {
+    return order.products
+      .map((item) => `${item.name || item.product_name || item.product_id || "Product"} × ${item.quantity || 1}`)
+      .join(", ");
+  }
+
+  return "Products unavailable";
+}
+
 async function render() {
   const container = document.querySelector("#adminOrders");
   if (!container) {
@@ -39,11 +53,21 @@ async function render() {
 
   try {
     // NOTE: With the starter SQL, anon cannot read orders by default.
-    const { data, error } = await client
+    let { data, error } = await client
       .from("orders")
-      .select("id, created_at, customer_name, customer_email, product_name, quantity, total_price, order_status")
+      .select("id, created_at, customer_name, customer_email, product_name, quantity, total_price, total_amount, products, order_status")
       .order("created_at", { ascending: false })
       .limit(50);
+
+    if (error && (error.code === "42703" || error.code === "PGRST204")) {
+      const compactResult = await client
+        .from("orders")
+        .select("id, created_at, customer_name, customer_email, total_amount, products, order_status")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      data = compactResult.data;
+      error = compactResult.error;
+    }
 
     if (error) {
       container.innerHTML = `
@@ -76,11 +100,11 @@ async function render() {
               </div>
               <span class="order-status-badge">${escapeHtml(order.order_status)}</span>
             </div>
-            <p class="order-card-items">${escapeHtml(order.product_name)} × ${escapeHtml(order.quantity)}</p>
+            <p class="order-card-items">${escapeHtml(formatProducts(order))}</p>
             <div class="order-card-bottom">
               <div class="order-card-total">
                 <span>Total</span>
-                <strong>${formatMoney(order.total_price)}</strong>
+                <strong>${formatMoney(order.total_price ?? order.total_amount)}</strong>
               </div>
               <div style="text-align:right;color:#667085;font-size:0.9rem;font-weight:700;">
                 <div>${escapeHtml(order.customer_name)}</div>
@@ -99,4 +123,3 @@ async function render() {
 }
 
 document.addEventListener("DOMContentLoaded", render);
-

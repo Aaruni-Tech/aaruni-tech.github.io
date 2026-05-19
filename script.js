@@ -140,10 +140,11 @@ let cartItems = loadCart();
 let toastTimer;
 
 const FALLBACK_IMAGE_URL = "https://via.placeholder.com/400x400?text=No+Image";
+const BAD_HOSTS = ["localhost:7071", "localhost:37857"];
 
 function isLocalhostUrl(value) {
   const raw = String(value || "").trim().toLowerCase();
-  return raw.includes("localhost:7071") || raw.includes("localhost:37857") || raw.includes("://localhost");
+  return BAD_HOSTS.some((host) => raw.includes(host)) || raw.includes("://localhost");
 }
 
 function getSafeImageUrl(value) {
@@ -171,6 +172,19 @@ function onProductImageError(event) {
   if (img.dataset.fallbackApplied === "1") return;
   img.dataset.fallbackApplied = "1";
   img.src = FALLBACK_IMAGE_URL;
+}
+
+function sanitizeAllImages() {
+  document.querySelectorAll("img").forEach((img) => {
+    const src = String(img.currentSrc || img.src || "");
+    if (BAD_HOSTS.some((host) => src.includes(host))) {
+      img.dataset.fallbackApplied = "1";
+      img.src = FALLBACK_IMAGE_URL;
+      if (img.srcset) {
+        img.srcset = "";
+      }
+    }
+  });
 }
 
 function formatPrice(price) {
@@ -788,6 +802,15 @@ document.addEventListener(
   },
   true
 );
+
+// Global protection: if any code (including stale cached assets) injects localhost PNGs, swap them.
+try {
+  sanitizeAllImages();
+  const observer = new MutationObserver(() => sanitizeAllImages());
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["src", "srcset"] });
+} catch (error) {
+  // ignore
+}
 
 renderProducts();
 updateCartCount();

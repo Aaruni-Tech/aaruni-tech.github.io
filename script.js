@@ -6,7 +6,7 @@ const products = [
     price: 12999,
     rating: 4.4,
     description: "A balanced 5G phone with smooth display and all-day battery life.",
-    image: "https://placehold.co/600x460/f2faf6/143b36?text=Nova+Phone+Lite",
+    image: "",
   },
   {
     id: "spark-phone-max",
@@ -15,7 +15,7 @@ const products = [
     price: 17999,
     rating: 4.5,
     description: "Large screen, fast charging, and dependable cameras for daily use.",
-    image: "https://placehold.co/600x460/eef7fb/173847?text=Spark+Phone+Max",
+    image: "",
   },
   {
     id: "airbuds-prime",
@@ -24,7 +24,7 @@ const products = [
     price: 2499,
     rating: 4.6,
     description: "Noise control earbuds with clear calls and pocket-friendly charging.",
-    image: "https://placehold.co/600x460/fbf4f7/451d31?text=AirBuds+Prime",
+    image: "",
   },
   {
     id: "soundbar-mini",
@@ -33,7 +33,7 @@ const products = [
     price: 3999,
     rating: 4.3,
     description: "Compact TV audio upgrade for bedrooms, hostels, and small apartments.",
-    image: "https://placehold.co/600x460/f8f5ea/3e3418?text=SoundBar+Mini",
+    image: "",
   },
   {
     id: "workmate-laptop",
@@ -42,7 +42,7 @@ const products = [
     price: 38999,
     rating: 4.4,
     description: "Lightweight laptop for study, office work, browsing, and video calls.",
-    image: "https://placehold.co/600x460/f7faf8/103f3f?text=WorkMate+Laptop",
+    image: "",
   },
   {
     id: "usb-c-hub",
@@ -51,7 +51,7 @@ const products = [
     price: 1599,
     rating: 4.2,
     description: "Connect display, storage, and cards with one slim travel adapter.",
-    image: "https://placehold.co/600x460/f2faf6/143b36?text=USB-C+Hub",
+    image: "",
   },
   {
     id: "smart-bulb-pack",
@@ -60,7 +60,7 @@ const products = [
     price: 1199,
     rating: 4.1,
     description: "Warm and cool lighting presets for living rooms and study spaces.",
-    image: "https://placehold.co/600x460/eef7fb/173847?text=Smart+Bulb+Duo",
+    image: "",
   },
   {
     id: "security-camera",
@@ -69,7 +69,7 @@ const products = [
     price: 2199,
     rating: 4.5,
     description: "Indoor security camera with motion alerts and night visibility.",
-    image: "https://placehold.co/600x460/fbf4f7/451d31?text=HomeGuard+Camera",
+    image: "",
   },
   {
     id: "power-bank-pro",
@@ -78,7 +78,7 @@ const products = [
     price: 1799,
     rating: 4.7,
     description: "20,000 mAh backup power with dual USB output and slim carry design.",
-    image: "https://placehold.co/600x460/f8f5ea/3e3418?text=Power+Bank+Pro",
+    image: "",
   },
   {
     id: "fast-charger",
@@ -87,7 +87,7 @@ const products = [
     price: 1499,
     rating: 4.3,
     description: "Fast wall charger for compatible phones, tablets, and laptops.",
-    image: "https://placehold.co/600x460/f7faf8/103f3f?text=RapidCharge+65W",
+    image: "",
   },
   {
     id: "keyboard-mouse",
@@ -96,7 +96,7 @@ const products = [
     price: 1299,
     rating: 4.2,
     description: "Wireless desk combo with soft keys and precise everyday tracking.",
-    image: "https://placehold.co/600x460/f2faf6/143b36?text=Keyboard+Mouse",
+    image: "",
   },
   {
     id: "neckband-sport",
@@ -105,7 +105,7 @@ const products = [
     price: 999,
     rating: 4.1,
     description: "Lightweight neckband for calls, workouts, and long commute playlists.",
-    image: "https://placehold.co/600x460/eef7fb/173847?text=Pulse+Neckband",
+    image: "",
   },
 ];
 
@@ -139,6 +139,40 @@ let activeCategory = "All";
 let cartItems = loadCart();
 let toastTimer;
 
+const FALLBACK_IMAGE_URL = "https://via.placeholder.com/400x400?text=No+Image";
+
+function isLocalhostUrl(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return raw.includes("localhost:7071") || raw.includes("localhost:37857") || raw.includes("://localhost");
+}
+
+function getSafeImageUrl(value) {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return FALLBACK_IMAGE_URL;
+  }
+
+  if (isLocalhostUrl(raw)) {
+    return FALLBACK_IMAGE_URL;
+  }
+
+  // Only allow http(s) absolute URLs or same-origin relative paths.
+  if (/^https?:\/\//i.test(raw) || raw.startsWith("/") || raw.startsWith("./") || raw.startsWith("../")) {
+    return raw;
+  }
+
+  return FALLBACK_IMAGE_URL;
+}
+
+function onProductImageError(event) {
+  const img = event.target;
+  if (!img || img.tagName !== "IMG") return;
+  if (img.dataset.fallbackApplied === "1") return;
+  img.dataset.fallbackApplied = "1";
+  img.src = FALLBACK_IMAGE_URL;
+}
+
 function formatPrice(price) {
   return `Rs. ${price.toLocaleString("en-IN")}`;
 }
@@ -154,10 +188,11 @@ function getFilteredProducts() {
 }
 
 function productTemplate(product) {
+  const safeImage = getSafeImageUrl(product.image);
   return `
     <article class="product-card">
       <div class="product-image-wrap">
-        <img src="${product.image}" alt="${product.name}" loading="lazy" />
+        <img src="${safeImage}" alt="${product.name}" loading="lazy" onerror="this.onerror=null;this.src='${FALLBACK_IMAGE_URL}'" />
       </div>
       <div class="product-body">
         <div class="product-meta">
@@ -241,7 +276,7 @@ function renderCart() {
 
       return `
         <div class="cart-line">
-          <img src="${product.image}" alt="${product.name}" loading="lazy" />
+          <img src="${getSafeImageUrl(product.image)}" alt="${product.name}" loading="lazy" onerror="this.onerror=null;this.src='${FALLBACK_IMAGE_URL}'" />
           <div>
             <strong>${product.name}</strong>
             <span class="line-price">${formatPrice(product.price)} each</span>
@@ -741,6 +776,18 @@ try {
 } catch (error) {
   // Ignore URL parsing failures.
 }
+
+// Safety: never keep broken localhost images in production.
+document.addEventListener(
+  "error",
+  (event) => {
+    const target = event.target;
+    if (target && target.tagName === "IMG") {
+      onProductImageError(event);
+    }
+  },
+  true
+);
 
 renderProducts();
 updateCartCount();

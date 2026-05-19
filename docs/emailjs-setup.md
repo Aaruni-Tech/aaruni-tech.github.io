@@ -18,13 +18,13 @@ This project uses EmailJS for static-site order emails from GitHub Pages.
    - Seller new order alert
 4. Copy the buyer template HTML from `docs/emailjs-buyer-template.html`.
 5. Copy the seller template HTML from `docs/emailjs-seller-template.html`.
-6. In `email.js`, replace:
+6. In `emailjs-config.js`, set:
 
 ```js
-publicKey: "YOUR_EMAILJS_PUBLIC_KEY",
-serviceId: "YOUR_EMAILJS_SERVICE_ID",
-buyerTemplateId: "YOUR_BUYER_TEMPLATE_ID",
-sellerTemplateId: "YOUR_SELLER_TEMPLATE_ID",
+window.EMAILJS_PUBLIC_KEY = "YOUR_PUBLIC_KEY";
+window.EMAILJS_SERVICE_ID = "YOUR_SERVICE_ID";
+window.EMAILJS_BUYER_TEMPLATE_ID = "YOUR_BUYER_TEMPLATE_ID";
+window.EMAILJS_SELLER_TEMPLATE_ID = "YOUR_SELLER_TEMPLATE_ID";
 ```
 
 7. In EmailJS account security settings, restrict the allowed origin to:
@@ -41,6 +41,7 @@ Both templates receive these variables:
 {{order_id}}
 {{invoice_number}}
 {{order_date}}
+{{order_time}}
 {{order_timestamp}}
 {{order_status}}
 {{customer_name}}
@@ -50,6 +51,7 @@ Both templates receive these variables:
 {{items_text}}
 {{items_html}}
 {{total_amount}}
+{{subtotal_amount}}
 {{payment_id}}
 {{estimated_delivery_date}}
 {{support_email}}
@@ -73,7 +75,7 @@ Both templates receive these variables:
 
 ## Testing
 
-1. Replace the EmailJS placeholders in `email.js`.
+1. Replace the EmailJS placeholders in `emailjs-config.js`.
 2. Open `index.html` locally or on GitHub Pages.
 3. Sign up with name, email, phone, and delivery address.
 4. Add a product to cart.
@@ -86,7 +88,7 @@ Both templates receive these variables:
 
 ## Common mistakes
 
-- Leaving placeholder IDs in `email.js`.
+- Leaving placeholder IDs in `emailjs-config.js`.
 - Creating only one EmailJS template instead of buyer and seller templates.
 - Forgetting to set the buyer template recipient to `{{to_email}}`.
 - Forgetting to set the seller template recipient to `{{seller_email}}`.

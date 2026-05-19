@@ -1,8 +1,8 @@
 const AARUNI_EMAIL_CONFIG = {
-  publicKey: "YOUR_EMAILJS_PUBLIC_KEY",
-  serviceId: "YOUR_EMAILJS_SERVICE_ID",
-  buyerTemplateId: "YOUR_BUYER_TEMPLATE_ID",
-  sellerTemplateId: "YOUR_SELLER_TEMPLATE_ID",
+  publicKey: window.EMAILJS_PUBLIC_KEY || "YOUR_EMAILJS_PUBLIC_KEY",
+  serviceId: window.EMAILJS_SERVICE_ID || "YOUR_EMAILJS_SERVICE_ID",
+  buyerTemplateId: window.EMAILJS_BUYER_TEMPLATE_ID || "YOUR_BUYER_TEMPLATE_ID",
+  sellerTemplateId: window.EMAILJS_SELLER_TEMPLATE_ID || "YOUR_SELLER_TEMPLATE_ID",
   sellerEmail: "tech.aaruni@gmail.com",
 };
 
@@ -71,34 +71,17 @@ function buildItemsHtml(order) {
 function buildBuyerEmailHtml(order) {
   return `
     <div style="margin:0;background:#f4f7fb;padding:24px;font-family:Arial,sans-serif;color:#111827;">
-      <div style="max-width:680px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
-        <div style="background:#0f766e;color:#ffffff;padding:24px;">
-          <h1 style="margin:0;font-size:24px;">Aaruni Tech</h1>
-          <p style="margin:8px 0 0;font-size:16px;">Thanks ${escapeEmailHtml(order.buyer.name)}, your order is confirmed.</p>
+      <div style="max-width:620px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;border:1px solid #e5e7eb;">
+        <div style="background:#111827;color:#ffffff;padding:22px 24px;">
+          <h1 style="margin:0;font-size:20px;letter-spacing:0.4px;">Aaruni Tech</h1>
+          <p style="margin:10px 0 0;font-size:14px;color:#e5e7eb;">Order placed successfully.</p>
         </div>
         <div style="padding:24px;">
-          <p style="margin:0 0 18px;color:#475467;">We will notify you when your order is packed and shipped.</p>
-          <div style="display:grid;gap:10px;margin-bottom:22px;">
-            <p style="margin:0;"><strong>Order ID:</strong> ${escapeEmailHtml(order.id)}</p>
-            <p style="margin:0;"><strong>Order Date:</strong> ${escapeEmailHtml(order.orderDate)}</p>
-            <p style="margin:0;"><strong>Payment ID:</strong> ${escapeEmailHtml(order.payment.id)}</p>
-            <p style="margin:0;"><strong>Estimated Delivery:</strong> ${escapeEmailHtml(order.estimatedDeliveryDate)}</p>
+          <p style="margin:0 0 10px;color:#475467;">Hi ${escapeEmailHtml(order.buyer.name)}, your order has been placed.</p>
+          <div style="border:1px solid #e5e7eb;border-radius:12px;padding:16px;background:#f9fafb;">
+            <p style="margin:0;color:#667085;font-size:12px;font-weight:800;text-transform:uppercase;">Order ID</p>
+            <p style="margin:6px 0 0;font-size:16px;font-weight:900;color:#101828;">${escapeEmailHtml(order.id)}</p>
           </div>
-          <table style="width:100%;border-collapse:collapse;margin:0 0 22px;">
-            <thead>
-              <tr style="background:#f9fafb;color:#475467;font-size:13px;">
-                <th style="padding:12px;text-align:left;">Product</th>
-                <th style="padding:12px;text-align:center;">Qty</th>
-                <th style="padding:12px;text-align:right;">Price</th>
-                <th style="padding:12px;text-align:right;">Total</th>
-              </tr>
-            </thead>
-            <tbody>${buildItemsHtml(order)}</tbody>
-          </table>
-          <p style="margin:0 0 8px;"><strong>Total Amount:</strong> ${window.AaruniOrders.formatOrderPrice(order.totalAmount)}</p>
-          <p style="margin:0 0 18px;"><strong>Delivery Address:</strong> ${escapeEmailHtml(order.buyer.address || "not provided")}</p>
-          <a href="${escapeEmailHtml(order.trackingUrl)}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;">Track Order</a>
-          <p style="margin:22px 0 0;color:#667085;font-size:13px;">Need help? Contact ${escapeEmailHtml(order.supportEmail)}.</p>
         </div>
       </div>
     </div>
@@ -106,51 +89,84 @@ function buildBuyerEmailHtml(order) {
 }
 
 function buildSellerEmailHtml(order) {
+  const itemsList = Array.isArray(order.items)
+    ? order.items
+        .map(
+          (item) =>
+            `${escapeEmailHtml(item.name)} x ${escapeEmailHtml(item.quantity)} (${window.AaruniOrders.formatOrderPrice(item.lineTotal)})`
+        )
+        .join("<br>")
+    : "";
+
   return `
     <div style="font-family:Arial,sans-serif;line-height:1.5;color:#111827;">
       <h2 style="margin:0 0 12px;">New Aaruni Tech Order</h2>
-      <p><strong>Order ID:</strong> ${escapeEmailHtml(order.id)}</p>
-      <p><strong>Timestamp:</strong> ${escapeEmailHtml(order.createdAt)}</p>
-      <p><strong>Customer:</strong> ${escapeEmailHtml(order.buyer.name)}</p>
-      <p><strong>Phone:</strong> ${escapeEmailHtml(order.buyer.phone || "not provided")}</p>
-      <p><strong>Email:</strong> ${escapeEmailHtml(order.buyer.email || "not provided")}</p>
-      <p><strong>Address:</strong> ${escapeEmailHtml(order.buyer.address || "not provided")}</p>
-      <p><strong>Items:</strong><br>${escapeEmailHtml(buildItemsText(order)).replace(/\n/g, "<br>")}</p>
-      <p><strong>Total:</strong> ${window.AaruniOrders.formatOrderPrice(order.totalAmount)}</p>
+      <p><strong>Generated Order ID:</strong> ${escapeEmailHtml(order.id)}</p>
+      <p><strong>Order Date and Time:</strong> ${escapeEmailHtml(`${order.orderDate} ${order.orderTime}`)}</p>
+      <p><strong>Order Timestamp (ISO):</strong> ${escapeEmailHtml(order.createdAt)}</p>
+      <hr style="border:0;border-top:1px solid #e5e7eb;margin:16px 0;" />
+      <p style="margin:0 0 6px;"><strong>Customer Full Name:</strong> ${escapeEmailHtml(order.buyer.name)}</p>
+      <p style="margin:0 0 6px;"><strong>Customer Email:</strong> ${escapeEmailHtml(order.buyer.email || "not provided")}</p>
+      <p style="margin:0 0 6px;"><strong>Phone Number:</strong> ${escapeEmailHtml(order.buyer.phone || "not provided")}</p>
+      <p style="margin:0 0 6px;"><strong>Shipping Address:</strong> ${escapeEmailHtml(order.buyer.address || "not provided")}</p>
+      <hr style="border:0;border-top:1px solid #e5e7eb;margin:16px 0;" />
+      <p><strong>Ordered Products:</strong><br>${itemsList || escapeEmailHtml(buildItemsText(order)).replace(/\\n/g, "<br>")}</p>
+      <p><strong>Quantity:</strong> ${escapeEmailHtml(order.totalQuantity || 0)}</p>
+      <p><strong>Subtotal:</strong> ${window.AaruniOrders.formatOrderPrice(order.subtotal)}</p>
+      <p><strong>Total Amount:</strong> ${window.AaruniOrders.formatOrderPrice(order.totalAmount)}</p>
       <p><strong>Razorpay Payment ID:</strong> ${escapeEmailHtml(order.payment.id)}</p>
+      <p><strong>Payment Status:</strong> ${escapeEmailHtml((order.payment && order.payment.status) || "Paid")}</p>
     </div>
   `;
 }
 
 function buildTemplateParams(order) {
-  const sharedParams = {
+  const itemsText = buildItemsText(order);
+  const sellerParams = {
     order_id: order.id,
     invoice_number: order.invoiceNumber,
     order_date: order.orderDate,
+    order_time: order.orderTime,
     order_timestamp: order.createdAt,
     order_status: order.status,
     customer_name: order.buyer.name,
     customer_email: order.buyer.email,
     customer_phone: order.buyer.phone,
     delivery_address: order.buyer.address,
-    items_text: buildItemsText(order),
+    shipping_address: order.buyer.address,
+    items_text: itemsText,
     items_html: buildItemsHtml(order),
     total_amount: window.AaruniOrders.formatOrderPrice(order.totalAmount),
+    subtotal_amount: window.AaruniOrders.formatOrderPrice(order.subtotal),
+    total_amount_raw: Number(order.totalAmount || 0),
+    subtotal_amount_raw: Number(order.subtotal || 0),
     payment_id: order.payment.id,
+    razorpay_payment_id: order.payment.id,
+    payment_status: (order.payment && order.payment.status) || "Paid",
+    product_details: itemsText,
     estimated_delivery_date: order.estimatedDeliveryDate,
     support_email: order.supportEmail,
     tracking_url: order.trackingUrl,
+    // Common EmailJS template fields (prevents hardcoded template names).
+    from_name: order.buyer.name,
+    reply_to: order.buyer.email || "",
+    subject: `New Aaruni Tech Order ${order.id}`,
   };
 
   return {
     buyer: {
-      ...sharedParams,
+      // Keep buyer payload minimal so templates can't accidentally render internal details.
       to_name: order.buyer.name,
       to_email: order.buyer.email,
+      from_name: "Aaruni Tech",
+      reply_to: order.supportEmail,
+      subject: `Aaruni Tech Order ${order.id}`,
+      order_id: order.id,
+      customer_name: order.buyer.name,
       message_html: buildBuyerEmailHtml(order),
     },
     seller: {
-      ...sharedParams,
+      ...sellerParams,
       to_name: "Aaruni Tech",
       to_email: AARUNI_EMAIL_CONFIG.sellerEmail,
       seller_email: AARUNI_EMAIL_CONFIG.sellerEmail,

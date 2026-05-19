@@ -77,3 +77,14 @@ The installed app checks `version.json` on open. If the stored version differs, 
 - Add secure checkout, payments, invoices, shipping, and refunds.
 - Add accessibility testing and browser compatibility checks.
 - Connect a backend or ecommerce platform only when real orders are needed.
+
+## Supabase Orders (Optional)
+
+If you want server-backed order history + tracking timelines, configure Supabase and create the required tables described in `docs/supabase-orders.md`. This repo intentionally keeps secrets out of the frontend; for production customer-data privacy, add Supabase Auth or an Edge Function with proper RLS policies.
+
+## Supabase Ecommerce Starter (Optional)
+
+For a minimal startup-style catalog + orders backend (with stock reduction), use:
+- `docs/supabase-ecommerce-starter.sql`
+- `docs/supabase-ecommerce-orders-v2.sql` (cart checkout + admin-order fields)
+- `docs/supabase-ecommerce-setup.md`

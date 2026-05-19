@@ -1,6 +1,7 @@
 const AARUNI_ORDER_STORAGE_KEY = "aaruniTechOrders";
 const AARUNI_LAST_ORDER_KEY = "aaruniTechLastOrderId";
-const AARUNI_ORDER_STATUSES = ["Confirmed", "Packed", "Shipped", "Delivered"];
+const AARUNI_ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
+const LEGACY_STATUS_MAP = new Map([["Confirmed", "Order Confirmed"]]);
 
 function formatOrderPrice(amount) {
   return `Rs. ${Number(amount || 0).toLocaleString("en-IN")}`;
@@ -22,7 +23,18 @@ function addOrderDays(date, days) {
 
 function generateOrderId(date = new Date()) {
   const datePart = date.toISOString().slice(0, 10).replace(/-/g, "");
-  const randomPart = Math.random().toString(36).slice(2, 8).toUpperCase();
+  let randomPart = "";
+
+  if (window.crypto && typeof window.crypto.randomUUID === "function") {
+    randomPart = window.crypto.randomUUID().replace(/-/g, "").slice(0, 8).toUpperCase();
+  } else if (window.crypto && typeof window.crypto.getRandomValues === "function") {
+    const bytes = new Uint8Array(4);
+    window.crypto.getRandomValues(bytes);
+    randomPart = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("").toUpperCase();
+  } else {
+    randomPart = Math.random().toString(36).slice(2, 10).toUpperCase();
+  }
+
   return `AT-${datePart}-${randomPart}`;
 }
 
@@ -73,7 +85,7 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
   return {
     id: orderId,
     invoiceNumber: `INV-${orderId}`,
-    status: "Confirmed",
+    status: "Order Confirmed",
     createdAt: createdAt.toISOString(),
     orderDate: formatOrderDate(createdAt),
     orderTime: new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit" }).format(createdAt),
@@ -101,17 +113,46 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
     trackingUrl: `${window.location.origin}${window.location.pathname.replace(/index\.html$/, "")}track-order.html?order_id=${encodeURIComponent(orderId)}`,
     statusHistory: [
       {
-        status: "Confirmed",
+        status: "Order Confirmed",
         at: createdAt.toISOString(),
       },
     ],
   };
 }
 
+function normalizeOrderStatus(status) {
+  if (!status) {
+    return "Order Confirmed";
+  }
+
+  const rawStatus = String(status).trim();
+  const mapped = LEGACY_STATUS_MAP.get(rawStatus);
+  return mapped || (AARUNI_ORDER_STATUSES.includes(rawStatus) ? rawStatus : "Order Confirmed");
+}
+
 function loadOrders() {
   try {
     const savedOrders = JSON.parse(window.localStorage.getItem(AARUNI_ORDER_STORAGE_KEY));
-    return Array.isArray(savedOrders) ? savedOrders : [];
+    if (!Array.isArray(savedOrders)) {
+      return [];
+    }
+
+    // Backwards-compat: normalize old local-only status values.
+    return savedOrders.map((order) => {
+      if (!order || typeof order !== "object") {
+        return order;
+      }
+
+      const normalized = { ...order };
+      normalized.status = normalizeOrderStatus(normalized.status);
+      normalized.statusHistory = Array.isArray(normalized.statusHistory)
+        ? normalized.statusHistory.map((entry) => ({
+            ...entry,
+            status: normalizeOrderStatus(entry.status),
+          }))
+        : [];
+      return normalized;
+    });
   } catch (error) {
     return [];
   }
@@ -139,7 +180,9 @@ function getLastOrder() {
 }
 
 function updateOrderStatus(orderId, status) {
-  if (!AARUNI_ORDER_STATUSES.includes(status)) {
+  const normalizedStatus = normalizeOrderStatus(status);
+
+  if (!AARUNI_ORDER_STATUSES.includes(normalizedStatus)) {
     return null;
   }
 
@@ -150,19 +193,20 @@ function updateOrderStatus(orderId, status) {
     return null;
   }
 
-  order.status = status;
+  order.status = normalizedStatus;
   order.statusHistory = Array.isArray(order.statusHistory) ? order.statusHistory : [];
-  order.statusHistory.push({ status, at: new Date().toISOString() });
+  order.statusHistory.push({ status: normalizedStatus, at: new Date().toISOString() });
   saveOrders(orders);
   return order;
 }
 
 function getTrackingSteps(order) {
-  const currentIndex = Math.max(0, AARUNI_ORDER_STATUSES.indexOf(order.status));
+  const currentStatus = normalizeOrderStatus(order.status);
+  const currentIndex = Math.max(0, AARUNI_ORDER_STATUSES.indexOf(currentStatus));
   const history = Array.isArray(order.statusHistory) ? order.statusHistory : [];
 
   return AARUNI_ORDER_STATUSES.map((status, index) => {
-    const historyEntry = history.find((entry) => entry.status === status);
+    const historyEntry = history.find((entry) => normalizeOrderStatus(entry.status) === status);
 
     return {
       status,
@@ -302,14 +346,12 @@ function attachOrderHistoryControls() {
   orderPanel.className = "order-history-entry";
   orderPanel.innerHTML = `
     <div>
-      <strong>Orders saved on this device</strong>
-      <p>Track recent orders and download a simple invoice.</p>
+      <strong>My Orders</strong>
+      <p>View your latest orders, tracking updates, and invoices.</p>
     </div>
-    <button class="secondary-button" id="orderHistoryButton" type="button">View Orders</button>
+    <a class="secondary-button" id="orderHistoryButton" href="my-orders.html">Open</a>
   `;
   signupForm.insertAdjacentElement("afterend", orderPanel);
-
-  orderPanel.querySelector("#orderHistoryButton").addEventListener("click", openOrderHistoryModal);
 }
 
 function renderTrackingPage(containerId) {
@@ -319,57 +361,93 @@ function renderTrackingPage(containerId) {
     return;
   }
 
-  const params = new URLSearchParams(window.location.search);
-  const order = getOrderById(params.get("order_id")) || getLastOrder();
+  container.innerHTML = `<article class="info-card"><h2>Loading order…</h2><p>Please wait.</p></article>`;
 
-  if (!order) {
+  const params = new URLSearchParams(window.location.search);
+  const requestedOrderId = params.get("order_id");
+
+  const renderOrder = (order) => {
+    if (!order) {
+      container.innerHTML = `
+        <article class="info-card">
+          <h2>Order not found</h2>
+          <p>We couldn’t find an order for this tracking link on this device or on the server.</p>
+          <a class="primary-link tracking-action" href="index.html#products">Shop Products</a>
+        </article>
+      `;
+      return;
+    }
+
     container.innerHTML = `
-      <article class="info-card">
-        <h2>Order not found</h2>
-        <p>This browser does not have a saved order for that tracking link.</p>
-        <a class="primary-link tracking-action" href="index.html#products">Shop Products</a>
+      <article class="tracking-card">
+        <p class="section-kicker">Tracking</p>
+        <h1>${order.id}</h1>
+        <p>Estimated delivery: ${order.estimatedDeliveryDate}</p>
+        <div class="tracking-summary">
+          <div><span>Status</span><strong>${order.status}</strong></div>
+          <div><span>Total</span><strong>${formatOrderPrice(order.totalAmount)}</strong></div>
+          <div><span>Payment</span><strong>${order.payment.id}</strong></div>
+        </div>
+        <div class="tracking-timeline">
+          ${getTrackingSteps(order)
+            .map(
+              (step) => `
+            <div class="tracking-step ${step.active ? "active" : ""}">
+              <span></span>
+              <div>
+                <strong>${step.status}</strong>
+                <small>${step.date || "Pending"}</small>
+              </div>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+        <div class="tracking-items">
+          <h2>Items</h2>
+          ${order.items
+            .map(
+              (item) => `
+            <div>
+              <span>${item.name} x ${item.quantity}</span>
+              <strong>${formatOrderPrice(item.lineTotal)}</strong>
+            </div>
+          `
+            )
+            .join("")}
+        </div>
+        <button class="primary-button tracking-action" type="button" data-tracking-invoice>Download Invoice</button>
       </article>
     `;
-    return;
-  }
 
-  container.innerHTML = `
-    <article class="tracking-card">
-      <p class="section-kicker">Tracking</p>
-      <h1>${order.id}</h1>
-      <p>Estimated delivery: ${order.estimatedDeliveryDate}</p>
-      <div class="tracking-summary">
-        <div><span>Status</span><strong>${order.status}</strong></div>
-        <div><span>Total</span><strong>${formatOrderPrice(order.totalAmount)}</strong></div>
-        <div><span>Payment</span><strong>${order.payment.id}</strong></div>
-      </div>
-      <div class="tracking-timeline">
-        ${getTrackingSteps(order).map((step) => `
-          <div class="tracking-step ${step.active ? "active" : ""}">
-            <span></span>
-            <div>
-              <strong>${step.status}</strong>
-              <small>${step.date || "Pending"}</small>
-            </div>
-          </div>
-        `).join("")}
-      </div>
-      <div class="tracking-items">
-        <h2>Items</h2>
-        ${order.items.map((item) => `
-          <div>
-            <span>${item.name} x ${item.quantity}</span>
-            <strong>${formatOrderPrice(item.lineTotal)}</strong>
-          </div>
-        `).join("")}
-      </div>
-      <button class="primary-button tracking-action" type="button" data-tracking-invoice>Download Invoice</button>
-    </article>
-  `;
+    container.querySelector("[data-tracking-invoice]").addEventListener("click", () => {
+      downloadInvoice(order);
+    });
+  };
 
-  container.querySelector("[data-tracking-invoice]").addEventListener("click", () => {
-    downloadInvoice(order);
-  });
+  (async () => {
+    try {
+      if (
+        requestedOrderId &&
+        window.AaruniSupabaseBackend &&
+        window.AaruniSupabaseBackend.isConfigured &&
+        window.AaruniSupabaseBackend.isConfigured() &&
+        window.AaruniSupabaseBackend.fetchOrderByOrderId
+      ) {
+        const result = await window.AaruniSupabaseBackend.fetchOrderByOrderId(requestedOrderId);
+
+        if (result && result.ok && result.order) {
+          renderOrder(result.order);
+          return;
+        }
+      }
+    } catch (error) {
+      console.warn("Supabase tracking fetch failed.", error);
+    }
+
+    const fallbackOrder = getOrderById(requestedOrderId) || getLastOrder();
+    renderOrder(fallbackOrder);
+  })();
 }
 
 document.addEventListener("DOMContentLoaded", attachOrderHistoryControls);

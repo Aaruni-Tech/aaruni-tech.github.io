@@ -434,14 +434,7 @@ function startRazorpayCheckout() {
       contact: signupProfile.phone || "",
     },
     notes: {
-      cart_items: truncateNote(getCartItemsSummary()),
-      cart_quantity: truncateNote(getCartQuantity()),
-      cart_total: truncateNote(formatPrice(amount)),
-      delivery_name: truncateNote(signupProfile.name),
-      delivery_email: truncateNote(signupProfile.email),
-      delivery_phone: truncateNote(signupProfile.phone),
-      delivery_address: truncateNote(getDeliveryAddress(signupProfile)),
-      support_email: RAZORPAY_SUPPORT_EMAIL,
+      // Keep Razorpay notes non-sensitive.
       source: "aaruni-tech.github.io",
     },
     theme: {
@@ -463,6 +456,54 @@ function startRazorpayCheckout() {
         if (!orderDraft || !window.AaruniOrders) {
           showToast(paymentId ? `Payment received. Payment ID: ${paymentId}` : "Payment received.");
           return;
+        }
+
+        if (
+          window.AaruniSupabaseBackend &&
+          window.AaruniSupabaseBackend.isConfigured &&
+          window.AaruniSupabaseBackend.isConfigured()
+        ) {
+          try {
+            const result = await window.AaruniSupabaseBackend.saveOrderAfterPayment({
+              paymentId,
+              orderDraft,
+            });
+
+            if (result && result.ok && result.order) {
+              window.AaruniOrders.saveOrder(result.order);
+              showToast(`Order placed: ${result.order.id}`);
+
+              if (window.AaruniEmail && window.AaruniEmail.isEmailConfigured && window.AaruniEmail.isEmailConfigured()) {
+                try {
+                  const emailResult = await window.AaruniEmail.sendOrderEmails(result.order);
+
+                  if (emailResult && emailResult.ok) {
+                    showToast("Order confirmation email sent.");
+                  } else {
+                    console.warn("EmailJS send failed.", emailResult);
+                    showToast("Order saved, but email could not be sent.");
+                  }
+                } catch (error) {
+                  console.warn("EmailJS send failed.", error);
+                  showToast("Order saved, but email could not be sent.");
+                }
+              } else if (window.AaruniEmail && window.AaruniEmail.isEmailConfigured) {
+                console.warn("EmailJS is not configured.");
+              }
+
+              return;
+            }
+
+            console.warn("Supabase order save failed.", result);
+            window.AaruniOrders.saveOrder(orderDraft);
+            showToast("Payment received, but order could not be saved to the server. Saved on this device.");
+            return;
+          } catch (error) {
+            console.warn("Supabase order save failed.", error);
+            window.AaruniOrders.saveOrder(orderDraft);
+            showToast("Payment received, but order could not be saved to the server. Saved on this device.");
+            return;
+          }
         }
 
         if (window.AaruniBackend && window.AaruniBackend.isConfigured && window.AaruniBackend.isConfigured()) {
@@ -634,6 +675,27 @@ accountSignupForm.addEventListener("submit", (event) => {
 });
 
 checkoutButton.addEventListener("click", startRazorpayCheckout);
+
+try {
+  const params = new URLSearchParams(window.location.search);
+  const shouldOpenCart = params.get("open_cart") === "1";
+  const shouldOpenAccount = params.get("open_account") === "1";
+
+  if (shouldOpenCart) {
+    openCart();
+  } else if (shouldOpenAccount) {
+    openAccountPanel();
+  }
+
+  if (shouldOpenCart || shouldOpenAccount) {
+    params.delete("open_cart");
+    params.delete("open_account");
+    const cleaned = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
+    window.history.replaceState({}, "", cleaned);
+  }
+} catch (error) {
+  // Ignore URL parsing failures.
+}
 
 renderProducts();
 updateCartCount();

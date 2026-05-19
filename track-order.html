@@ -32,7 +32,7 @@
     <section class="info-hero">
       <p class="section-kicker">Order</p>
       <h1>Track Order</h1>
-      <p>Tracking uses the order saved in this browser after checkout.</p>
+      <p>Enter from your tracking link. If available, we’ll fetch updates from the server.</p>
     </section>
 
     <section class="tracking-layout" id="trackingPage"></section>
@@ -71,9 +71,52 @@
     </div>
   </footer>
 
-  <script src="order.js?v=20260516-2"></script>
+  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+    <a href="index.html">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />
+      </svg>
+      <span>Home</span>
+    </a>
+    <a href="index.html#products">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 6h16" />
+        <path d="M4 12h16" />
+        <path d="M4 18h16" />
+      </svg>
+      <span>Shop</span>
+    </a>
+    <a href="my-orders.html">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 7h10" />
+        <path d="M7 11h10" />
+        <path d="M7 15h6" />
+        <path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+      </svg>
+      <span>Orders</span>
+    </a>
+    <a href="track-order.html" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 8v5l3 3" />
+        <path d="M12 22a10 10 0 1 0-10-10 10 10 0 0 0 10 10Z" />
+      </svg>
+      <span>Track</span>
+    </a>
+    <a href="index.html?open_cart=1#products">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 4h2l2.3 11.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.5L21 8H7" />
+        <path d="M10 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+        <path d="M18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+      </svg>
+      <span>Cart</span>
+    </a>
+  </nav>
+
+  <script src="supabase-config.js?v=20260519-2"></script>
+  <script type="module" src="supabase-backend.js?v=20260519-2"></script>
+  <script src="order.js?v=20260519-2"></script>
   <script src="whatsapp.js?v=20260516-2"></script>
-  <script src="pwa.js?v=20260516-2"></script>
+  <script src="pwa.js?v=20260519-2"></script>
   <script>
     document.addEventListener("DOMContentLoaded", () => {
       window.AaruniOrders.renderTrackingPage("trackingPage");

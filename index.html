@@ -393,19 +393,57 @@
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-app-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-auth-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore-compat.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/10.12.5/firebase-functions-compat.js"></script>
+  <nav class="mobile-bottom-nav" aria-label="Mobile navigation">
+    <a href="index.html" aria-current="page">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 10.5 12 3l9 7.5V21a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" />
+      </svg>
+      <span>Home</span>
+    </a>
+    <a href="index.html#products">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M4 6h16" />
+        <path d="M4 12h16" />
+        <path d="M4 18h16" />
+      </svg>
+      <span>Shop</span>
+    </a>
+    <a href="my-orders.html">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M7 7h10" />
+        <path d="M7 11h10" />
+        <path d="M7 15h6" />
+        <path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+      </svg>
+      <span>Orders</span>
+    </a>
+    <a href="index.html?open_account=1">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
+        <path d="M4 21a8 8 0 0 1 16 0" />
+      </svg>
+      <span>Account</span>
+    </a>
+    <a href="index.html?open_cart=1#products">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M3 4h2l2.3 11.2a2 2 0 0 0 2 1.6h7.9a2 2 0 0 0 2-1.5L21 8H7" />
+        <path d="M10 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+        <path d="M18 21a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" />
+      </svg>
+      <span>Cart</span>
+    </a>
+  </nav>
+
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-  <script src="firebase-config.js?v=20260518-1"></script>
-  <script src="firebase-backend.js?v=20260518-1"></script>
-  <script src="order.js?v=20260516-2"></script>
-  <script src="email.js?v=20260516-2"></script>
-  <script src="script.js?v=20260516-2"></script>
+  <script src="supabase-config.js?v=20260519-2"></script>
+  <script type="module" src="supabase-backend.js?v=20260519-2"></script>
+  <script src="emailjs-config.js?v=20260519-2"></script>
+  <script src="order.js?v=20260519-2"></script>
+  <script src="email.js?v=20260519-2"></script>
+  <script src="script.js?v=20260519-2"></script>
   <script src="whatsapp.js?v=20260516-2"></script>
-  <script src="pwa.js?v=20260516-2"></script>
+  <script src="pwa.js?v=20260519-2"></script>
 </body>
 
 </html>

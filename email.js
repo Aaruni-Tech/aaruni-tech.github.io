@@ -12,6 +12,14 @@ function isEmailPlaceholder(value) {
   return !value || String(value).startsWith("YOUR_");
 }
 
+function maskKey(value) {
+  const raw = String(value || "");
+  if (raw.length <= 6) {
+    return raw ? "***" : "";
+  }
+  return `${raw.slice(0, 3)}***${raw.slice(-3)}`;
+}
+
 function isEmailConfigured() {
   return Boolean(
     window.emailjs &&
@@ -28,6 +36,13 @@ function initEmailService() {
   }
 
   if (!emailJsInitialized) {
+    console.info("[EmailJS] Initializing", {
+      serviceId: AARUNI_EMAIL_CONFIG.serviceId,
+      buyerTemplateId: AARUNI_EMAIL_CONFIG.buyerTemplateId,
+      sellerTemplateId: AARUNI_EMAIL_CONFIG.sellerTemplateId,
+      publicKey: maskKey(AARUNI_EMAIL_CONFIG.publicKey),
+      adminTo: AARUNI_EMAIL_CONFIG.sellerEmail,
+    });
     window.emailjs.init({
       publicKey: AARUNI_EMAIL_CONFIG.publicKey,
     });
@@ -179,29 +194,79 @@ function sendEmailTemplate(templateId, params) {
   return window.emailjs.send(AARUNI_EMAIL_CONFIG.serviceId, templateId, params);
 }
 
+function toEmailJsErrorDetails(error) {
+  if (!error) {
+    return { message: "Unknown EmailJS error." };
+  }
+
+  if (typeof error === "string") {
+    return { message: error };
+  }
+
+  const status = error.status != null ? String(error.status) : "";
+  const text = error.text != null ? String(error.text) : "";
+  const message = error.message != null ? String(error.message) : text || "EmailJS send failed.";
+
+  return {
+    message,
+    status,
+    text,
+    raw: error,
+  };
+}
+
 function sendOrderEmails(order) {
   if (!initEmailService()) {
-    console.warn("EmailJS is not configured. Update email.js with your EmailJS public key, service ID, and template IDs.");
-    return Promise.resolve({ ok: false, skipped: true, reason: "EmailJS is not configured." });
+    const missing = [];
+    if (!window.emailjs) missing.push("emailjs_sdk_not_loaded");
+    if (isEmailPlaceholder(AARUNI_EMAIL_CONFIG.publicKey)) missing.push("public_key");
+    if (isEmailPlaceholder(AARUNI_EMAIL_CONFIG.serviceId)) missing.push("service_id");
+    if (isEmailPlaceholder(AARUNI_EMAIL_CONFIG.buyerTemplateId)) missing.push("buyer_template_id");
+    if (isEmailPlaceholder(AARUNI_EMAIL_CONFIG.sellerTemplateId)) missing.push("seller_template_id");
+
+    console.warn("[EmailJS] Not configured", {
+      missing,
+      serviceId: AARUNI_EMAIL_CONFIG.serviceId,
+      buyerTemplateId: AARUNI_EMAIL_CONFIG.buyerTemplateId,
+      sellerTemplateId: AARUNI_EMAIL_CONFIG.sellerTemplateId,
+      publicKey: maskKey(AARUNI_EMAIL_CONFIG.publicKey),
+      adminTo: AARUNI_EMAIL_CONFIG.sellerEmail,
+    });
+
+    return Promise.resolve({
+      ok: false,
+      skipped: true,
+      reason: `EmailJS is not configured. Missing: ${missing.join(", ")}`,
+    });
   }
 
   const params = buildTemplateParams(order);
   const emailJobs = [];
 
   if (order.buyer.email) {
+    console.info("[EmailJS] Sending buyer email", {
+      to: order.buyer.email,
+      templateId: AARUNI_EMAIL_CONFIG.buyerTemplateId,
+      orderId: order.id,
+    });
     emailJobs.push(
       sendEmailTemplate(AARUNI_EMAIL_CONFIG.buyerTemplateId, params.buyer)
         .then((response) => ({ type: "buyer", ok: true, response }))
-        .catch((error) => ({ type: "buyer", ok: false, error }))
+        .catch((error) => ({ type: "buyer", ok: false, error: toEmailJsErrorDetails(error) }))
     );
   } else {
     emailJobs.push(Promise.resolve({ type: "buyer", ok: false, skipped: true, reason: "Buyer email is missing." }));
   }
 
+  console.info("[EmailJS] Sending admin email", {
+    to: AARUNI_EMAIL_CONFIG.sellerEmail,
+    templateId: AARUNI_EMAIL_CONFIG.sellerTemplateId,
+    orderId: order.id,
+  });
   emailJobs.push(
     sendEmailTemplate(AARUNI_EMAIL_CONFIG.sellerTemplateId, params.seller)
       .then((response) => ({ type: "seller", ok: true, response }))
-      .catch((error) => ({ type: "seller", ok: false, error }))
+      .catch((error) => ({ type: "seller", ok: false, error: toEmailJsErrorDetails(error) }))
   );
 
   return Promise.all(emailJobs).then((results) => ({

@@ -481,11 +481,18 @@ function startRazorpayCheckout() {
                     showToast("Order confirmation email sent.");
                   } else {
                     console.warn("EmailJS send failed.", emailResult);
-                    showToast("Order saved, but email could not be sent.");
+                    const sellerFailure = emailResult && Array.isArray(emailResult.results)
+                      ? emailResult.results.find((entry) => entry.type === "seller" && !entry.ok && !entry.skipped)
+                      : null;
+                    const errorMessage = sellerFailure && sellerFailure.error && sellerFailure.error.message
+                      ? String(sellerFailure.error.message)
+                      : "EmailJS send failed.";
+                    showToast(`Order saved. Email failed: ${errorMessage.slice(0, 140)}`);
                   }
                 } catch (error) {
                   console.warn("EmailJS send failed.", error);
-                  showToast("Order saved, but email could not be sent.");
+                  const message = error && error.message ? String(error.message) : "EmailJS send failed.";
+                  showToast(`Order saved. Email failed: ${message.slice(0, 140)}`);
                 }
               } else if (window.AaruniEmail && window.AaruniEmail.isEmailConfigured) {
                 console.warn("EmailJS is not configured.");

@@ -4,7 +4,7 @@
 
   window.SUPABASE_URL =
     LOCAL_URL ||
-    "https://cnsmgxgkxgbeumnvidpk.supabase.co";
+    "https://cnsmgxkgxbeumnvidpk.supabase.co";
 
   window.SUPABASE_ANON_KEY =
     LOCAL_KEY ||

@@ -2,7 +2,9 @@
 -- Run in Supabase Dashboard → SQL Editor.
 -- Fixes common 400/404 checkout errors:
 -- - missing users.full_name
+-- - missing users.shipping_address
 -- - missing orders.order_status
+-- - missing orders.phone
 -- - missing customers table
 -- - missing RPC public.place_order_cart
 
@@ -186,6 +188,7 @@ $$;
 
 revoke all on function public.place_order_cart(text, text, text, text, jsonb, text) from public;
 grant execute on function public.place_order_cart(text, text, text, text, jsonb, text) to anon;
+grant execute on function public.place_order_cart(text, text, text, text, jsonb, text) to authenticated;
 
 -- 6) RLS (enable + allow inserts needed by frontend)
 alter table public.users enable row level security;
@@ -195,16 +198,27 @@ alter table public.products enable row level security;
 
 drop policy if exists "public_insert_users" on public.users;
 create policy "public_insert_users" on public.users for insert to anon with check (true);
+drop policy if exists "auth_insert_users" on public.users;
+create policy "auth_insert_users" on public.users for insert to authenticated with check (true);
 
 drop policy if exists "public_insert_customers" on public.customers;
 create policy "public_insert_customers" on public.customers for insert to anon with check (true);
+drop policy if exists "auth_insert_customers" on public.customers;
+create policy "auth_insert_customers" on public.customers for insert to authenticated with check (true);
 
 drop policy if exists "public_insert_orders" on public.orders;
 create policy "public_insert_orders" on public.orders for insert to anon with check (true);
+drop policy if exists "auth_insert_orders" on public.orders;
+create policy "auth_insert_orders" on public.orders for insert to authenticated with check (true);
 
 -- Allow reading products for storefront; block product writes except via RPC.
 drop policy if exists "public_read_products" on public.products;
 create policy "public_read_products" on public.products for select to anon using (true);
+drop policy if exists "auth_read_products" on public.products;
+create policy "auth_read_products" on public.products for select to authenticated using (true);
 
 drop policy if exists "no_write_products_anon" on public.products;
 create policy "no_write_products_anon" on public.products as restrictive for all to anon using (false) with check (false);
+
+-- Refresh PostgREST schema cache so new tables/columns/functions are visible immediately.
+select pg_notify('pgrst', 'reload schema');

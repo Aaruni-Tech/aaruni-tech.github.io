@@ -7,6 +7,11 @@ let supabaseClient = null;
 
 const ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
 
+console.log("[Supabase] Backend init", {
+  url: window.SUPABASE_URL,
+  keyPresent: !!window.SUPABASE_ANON_KEY,
+});
+
 function isConfigured() {
   return Boolean(
     SUPABASE_URL &&

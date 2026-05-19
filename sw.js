@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.05.19.3";
+const APP_VERSION = "2026.05.19.4";
 const CACHE_NAME = `aaruni-tech-${APP_VERSION}`;
 
 const APP_SHELL = [
@@ -64,6 +64,24 @@ self.addEventListener("fetch", (event) => {
   }
 
   const url = new URL(request.url);
+
+  // Hard-block any accidental localhost image requests (stale scripts/extensions/etc.).
+  // This prevents infinite `net::ERR_CONNECTION_REFUSED` spam from ports used by dev tools.
+  if (url.hostname === "localhost" && (url.port === "7071" || url.port === "37857")) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="400" height="400"><rect width="100%" height="100%" fill="#f3f4f6"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#6b7280" font-family="Arial" font-size="20">No Image</text></svg>`;
+    event.respondWith(
+      Promise.resolve(
+        new Response(svg, {
+          status: 200,
+          headers: {
+            "Content-Type": "image/svg+xml; charset=utf-8",
+            "Cache-Control": "no-store",
+          },
+        })
+      )
+    );
+    return;
+  }
 
   if (url.origin !== self.location.origin) {
     return;

@@ -25,6 +25,15 @@ supabase secrets set \
 supabase functions deploy send-order-notification --project-ref cnsmgxgkxgbeumnvidpk
 ```
 
+For this static GitHub Pages checkout, deploy it with the public invocation flag so the browser can call it after payment:
+
+```sh
+supabase functions deploy send-order-notification \
+  --project-ref cnsmgxgkxgbeumnvidpk \
+  --use-api \
+  --no-verify-jwt
+```
+
 The function also needs Supabase's built-in `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`
 environment variables. Do not put the Resend API key or Supabase service role key in frontend
 JavaScript.

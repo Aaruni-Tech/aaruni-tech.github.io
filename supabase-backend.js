@@ -333,6 +333,21 @@ function normalizeRpcOrderPayload(rpcOrder) {
   return rpcOrder || null;
 }
 
+function buildProductsJsonbPayload(items) {
+  const products = (Array.isArray(items) ? items : [])
+    .map((item) => ({
+      product_id: String(item.id || "").trim(),
+      id: String(item.id || "").trim(),
+      name: String(item.name || "").trim(),
+      quantity: Number(item.quantity || 0),
+      price: Number(item.price || 0),
+      line_total: Number(item.lineTotal || 0),
+    }))
+    .filter((item) => item.product_id && item.quantity > 0);
+
+  return JSON.parse(JSON.stringify(products));
+}
+
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   if (!isConfigured()) {
     console.warn("[Supabase] Not configured", {
@@ -400,48 +415,26 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
     // Prefer the stock-safe cart RPC if present (orders v2).
     try {
       const items = Array.isArray(orderDraft.items) ? orderDraft.items : [];
-      const cartPayload = items
-        .map((item) => ({
-          product_id: item.id || "",
-          quantity: Number(item.quantity || 0),
-        }))
-        .filter((item) => item.product_id && item.quantity > 0);
+      const productsJson = buildProductsJsonbPayload(items);
 
-      if (cartPayload.length) {
-        const liveRpcPayload = {
+      if (productsJson.length) {
+        const rpcPayload = {
           p_customer_email: buyer.email || "",
           p_customer_name: buyer.name || "Customer",
           p_order_id: orderDraft.id,
           p_payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
           p_payment_status: paymentId ? "Paid" : "Pending",
           p_phone: buyer.phone || "",
-          p_products: items.map((item) => ({
-            product_id: item.id || "",
-            id: item.id || "",
-            name: item.name || "",
-            quantity: Number(item.quantity || 0),
-            price: Number(item.price || 0),
-            line_total: Number(item.lineTotal || 0),
-          })),
+          p_products: productsJson,
           p_shipping_address: buyer.address || "",
           p_total_amount: Number(orderDraft.totalAmount || 0),
         };
 
-        console.info("[Supabase] Calling RPC place_order_cart (production signature)", liveRpcPayload);
-        let rpcResponse = await client.rpc("place_order_cart", liveRpcPayload);
-
-        if (rpcResponse.error) {
-          console.warn("[Supabase] production-signature place_order_cart failed", toSupabaseErrorDetails(rpcResponse.error));
-          console.info("[Supabase] Calling RPC place_order_cart (schema-fix signature)", { cartPayload });
-          rpcResponse = await client.rpc("place_order_cart", {
-            p_customer_name: buyer.name || "Customer",
-            p_customer_email: buyer.email || "",
-            p_phone: buyer.phone || "",
-            p_shipping_address: buyer.address || "",
-            p_items: cartPayload,
-            p_payment_status: paymentId ? "Paid" : "Pending",
-          });
-        }
+        console.info("[Supabase] Calling RPC place_order_cart", {
+          ...rpcPayload,
+          p_products_json: JSON.stringify(productsJson),
+        });
+        const rpcResponse = await client.rpc("place_order_cart", rpcPayload);
 
         const rpcOrder = normalizeRpcOrderPayload(rpcResponse.data);
         const rpcError = rpcResponse.error;
@@ -508,14 +501,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         .map((item) => `${item.name || "Product"} x ${Number(item.quantity || 1)}`)
         .filter(Boolean)
         .join(", ");
-      const productsJson = items.map((item) => ({
-        product_id: item.id || "",
-        id: item.id || "",
-        name: item.name || "Product",
-        quantity: Number(item.quantity || 0),
-        price: Number(item.price || 0),
-        line_total: Number(item.lineTotal || 0),
-      }));
+      const productsJson = buildProductsJsonbPayload(items);
       const totalQty = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || Number(orderDraft.totalQuantity || 0) || 1;
 
       console.info("[Supabase] Trying direct insert into v2 orders table (no stock decrement)", {

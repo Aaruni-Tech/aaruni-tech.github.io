@@ -223,164 +223,25 @@ create index if not exists idx_products_product_id on public.products(product_id
 create index if not exists idx_products_slug on public.products(slug);
 create index if not exists idx_products_created_at on public.products(created_at desc);
 
--- Drop the known broken production overload where p_products was treated as text.
-drop function if exists public.place_order_cart(text, text, text, text, text, text, text, text, numeric);
-drop function if exists public.place_order_cart(text, text, text, text, text, text, text, text, double precision);
-drop function if exists public.place_order_cart(text, text, text, text, text, text, text, text, bigint);
-drop function if exists public.place_order_cart(text, text, text, text, text, text, text, text, integer);
-drop function if exists public.place_order_cart(text, text, text, text, text, text, text, text, text);
-drop function if exists public.place_order_cart(text, text, text, text, text, text, json, text, numeric);
-drop function if exists public.place_order_cart(text, text, text, text, text, text, json, text, double precision);
-
--- 5) RPC: current compact cart payload used by ecommerce-backend.js.
-create or replace function public.place_order_cart(
-  p_customer_name text,
-  p_customer_email text,
-  p_phone text,
-  p_shipping_address text,
-  p_items jsonb,
-  p_payment_status text
-)
-returns public.orders
-language plpgsql
-security definer
-set search_path = public
-as $$
+-- 5) RPC cleanup: remove every obsolete place_order_cart overload before
+-- creating the single production signature. This also clears older functions
+-- where p_products was text and failed against orders.products jsonb.
+do $$
 declare
-  v_item record;
-  v_product record;
-  v_total numeric := 0;
-  v_total_qty int := 0;
-  v_products_text text := '';
-  v_products_json jsonb := '[]'::jsonb;
-  v_order public.orders;
-  v_order_id text;
-  v_qty int;
-  v_product_id text;
-  v_item_name text;
-  v_unit_price numeric;
+  v_function text;
 begin
-  if p_customer_name is null or length(trim(p_customer_name)) = 0 then
-    raise exception 'customer_name is required';
-  end if;
-
-  if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
-    raise exception 'items must be a non-empty json array';
-  end if;
-
-  v_order_id :=
-    'AT-' ||
-    to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') ||
-    '-' ||
-    upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8));
-
-  for v_item in
-    select
-      coalesce(value->>'product_id', value->>'id')::text as product_id,
-      coalesce((value->>'quantity')::int, 0) as quantity
-    from jsonb_array_elements(p_items)
+  for v_function in
+    select p.oid::regprocedure::text
+    from pg_proc p
+    join pg_namespace n on n.oid = p.pronamespace
+    where n.nspname = 'public'
+      and p.proname = 'place_order_cart'
   loop
-    v_product_id := coalesce(v_item.product_id, '');
-    v_qty := coalesce(v_item.quantity, 0);
-
-    if v_product_id = '' then
-      raise exception 'item product_id is required';
-    end if;
-    if v_qty <= 0 then
-      raise exception 'item quantity must be > 0';
-    end if;
-
-    select ctid as row_ctid, id::text as id_text, product_id, slug, product_name, price, stock
-    into v_product
-    from public.products
-    where id::text = v_product_id
-       or product_id = v_product_id
-       or slug = v_product_id
-    order by
-      case
-        when id::text = v_product_id then 0
-        when product_id = v_product_id then 1
-        when slug = v_product_id then 2
-        else 3
-      end
-    limit 1
-    for update;
-
-    if found then
-      update public.products
-      set stock = greatest(stock - v_qty, 0)
-      where ctid = v_product.row_ctid;
-
-      v_item_name := coalesce(nullif(v_product.product_name, ''), v_product_id);
-      v_unit_price := coalesce(v_product.price, 0);
-    else
-      v_item_name := v_product_id;
-      v_unit_price := 0;
-    end if;
-
-    v_total := v_total + (v_unit_price * v_qty);
-    v_total_qty := v_total_qty + v_qty;
-    v_products_text := concat_ws(', ', nullif(v_products_text, ''), v_item_name || ' x ' || v_qty);
-    v_products_json := v_products_json || jsonb_build_array(jsonb_build_object(
-      'product_id', v_product_id,
-      'name', v_item_name,
-      'quantity', v_qty,
-      'price', v_unit_price,
-      'line_total', v_unit_price * v_qty
-    ));
+    execute format('drop function if exists %s', v_function);
   end loop;
+end $$;
 
-  insert into public.orders (
-    created_at,
-    order_at,
-    customer_name,
-    customer_email,
-    phone,
-    product_name,
-    quantity,
-    subtotal,
-    total_price,
-    total_amount,
-    products,
-    cart_items,
-    shipping_address,
-    payment_status,
-    order_status,
-    status,
-    currency,
-    order_id
-  )
-  values (
-    now(),
-    now(),
-    trim(p_customer_name),
-    nullif(trim(coalesce(p_customer_email, '')), ''),
-    nullif(trim(coalesce(p_phone, '')), ''),
-    nullif(trim(coalesce(v_products_text, '')), ''),
-    v_total_qty,
-    v_total,
-    v_total,
-    v_total,
-    v_products_json,
-    v_products_json,
-    nullif(trim(coalesce(p_shipping_address, '')), ''),
-    nullif(trim(coalesce(p_payment_status, 'Paid')), ''),
-    'Order Confirmed',
-    'Order Confirmed',
-    'INR',
-    v_order_id
-  )
-  returning * into v_order;
-
-  return v_order;
-end;
-$$;
-
-revoke all on function public.place_order_cart(text, text, text, text, jsonb, text) from public;
-grant execute on function public.place_order_cart(text, text, text, text, jsonb, text) to anon;
-grant execute on function public.place_order_cart(text, text, text, text, jsonb, text) to authenticated;
-
--- 6) RPC: production checkout payload used by supabase-backend.js after Razorpay.
+-- 6) RPC: canonical production checkout payload used by supabase-backend.js.
 create or replace function public.place_order_cart(
   p_customer_email text,
   p_customer_name text,
@@ -408,6 +269,8 @@ declare
   v_item_name text;
   v_unit_price numeric;
   v_line_total numeric;
+  v_computed_total numeric := 0;
+  v_order_total numeric := 0;
   v_order public.orders;
 begin
   if p_customer_name is null or length(trim(p_customer_name)) = 0 then
@@ -473,6 +336,7 @@ begin
     end if;
 
     v_total_qty := v_total_qty + v_qty;
+    v_computed_total := v_computed_total + v_line_total;
     v_products_text := concat_ws(', ', nullif(v_products_text, ''), v_item_name || ' x ' || v_qty);
     v_products_json := v_products_json || jsonb_build_array(jsonb_build_object(
       'product_id', v_product_id,
@@ -482,6 +346,8 @@ begin
       'line_total', v_line_total
     ));
   end loop;
+
+  v_order_total := coalesce(nullif(p_total_amount, 0), v_computed_total, 0);
 
   insert into public.orders (
     created_at,
@@ -512,9 +378,9 @@ begin
     nullif(trim(coalesce(p_phone, '')), ''),
     nullif(trim(coalesce(v_products_text, '')), ''),
     v_total_qty,
-    coalesce(p_total_amount, 0),
-    coalesce(p_total_amount, 0),
-    coalesce(p_total_amount, 0),
+    v_order_total,
+    v_order_total,
+    v_order_total,
     v_products_json,
     v_products_json,
     nullif(trim(coalesce(p_shipping_address, '')), ''),
@@ -601,3 +467,15 @@ join pg_namespace n on n.oid = p.pronamespace
 where n.nspname = 'public'
   and p.proname = 'place_order_cart'
 order by arguments;
+
+select count(*) as place_order_cart_overload_count
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname = 'public'
+  and p.proname = 'place_order_cart';
+
+select order_id, payment_id, jsonb_typeof(products) as products_jsonb_type, products
+from public.orders
+where order_id is not null
+order by created_at desc
+limit 5;

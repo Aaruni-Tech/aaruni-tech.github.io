@@ -1,4 +1,4 @@
-const AARUNI_APP_VERSION = "2026.05.19.7";
+const AARUNI_APP_VERSION = "2026.05.21.1";
 const VERSION_STORAGE_KEY = "aaruniTechAppVersion";
 
 let deferredInstallPrompt = null;

@@ -46,6 +46,21 @@ function toSafeMessage(error) {
   return "Unexpected error.";
 }
 
+function createOrderId() {
+  const now = new Date();
+  const datePart = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Kolkata",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  })
+    .format(now)
+    .replaceAll("-", "");
+  const randomPart = Math.random().toString(16).slice(2, 10).toUpperCase().padEnd(8, "0");
+
+  return `AT-${datePart}-${randomPart}`;
+}
+
 async function listProducts({ limit = 100 } = {}) {
   if (!isConfigured()) {
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
@@ -116,13 +131,27 @@ async function placeOrder({ productId, customerName, customerEmail, customerPhon
   const client = getClient();
 
   try {
+    const productsJson = JSON.parse(JSON.stringify([
+      {
+        product_id: safeProductId,
+        id: safeProductId,
+        name: "",
+        quantity: Math.floor(safeQuantity),
+        price: 0,
+        line_total: 0,
+      },
+    ]));
+
     const { data, error } = await client.rpc("place_order_cart", {
-      p_customer_name: safeCustomerName,
       p_customer_email: safeCustomerEmail,
-      p_phone: safeCustomerPhone,
-      p_shipping_address: safeShippingAddress,
-      p_items: [{ product_id: safeProductId, quantity: Math.floor(safeQuantity) }],
+      p_customer_name: safeCustomerName,
+      p_order_id: createOrderId(),
+      p_payment_id: "",
       p_payment_status: "Paid",
+      p_phone: safeCustomerPhone,
+      p_products: productsJson,
+      p_shipping_address: safeShippingAddress,
+      p_total_amount: 0,
     });
 
     if (error) {

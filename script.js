@@ -549,31 +549,28 @@ function startRazorpayCheckout() {
               window.AaruniOrders.saveOrder(result.order);
               showToast(`Order placed: ${result.order.id}`);
 
-              if (window.AaruniEmail && window.AaruniEmail.isEmailConfigured && window.AaruniEmail.isEmailConfigured()) {
+              if (window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.sendOrderNotificationEmail) {
                 try {
-                  console.info("[EmailJS] Sending order emails", { orderId: result.order.id });
-                  const emailResult = await window.AaruniEmail.sendOrderEmails(result.order);
-                  console.info("[EmailJS] sendOrderEmails result", emailResult);
+                  console.info("[OrderEmail] Sending admin order notification", { orderId: result.order.id });
+                  const emailResult = await window.AaruniSupabaseBackend.sendOrderNotificationEmail(result.order);
+                  console.info("[OrderEmail] sendOrderNotificationEmail result", emailResult);
 
                   if (emailResult && emailResult.ok) {
-                    showToast("Order confirmation email sent.");
+                    console.info("[OrderEmail] Admin notification accepted", {
+                      orderId: result.order.id,
+                      duplicate: Boolean(emailResult.duplicate),
+                      skipped: Boolean(emailResult.skipped),
+                    });
+                  } else if (emailResult && emailResult.skipped) {
+                    console.info("[OrderEmail] Admin notification skipped", emailResult);
                   } else {
-                    console.warn("EmailJS send failed.", emailResult);
-                    const sellerFailure = emailResult && Array.isArray(emailResult.results)
-                      ? emailResult.results.find((entry) => entry.type === "seller" && !entry.ok && !entry.skipped)
-                      : null;
-                    const errorMessage = sellerFailure && sellerFailure.error && sellerFailure.error.message
-                      ? String(sellerFailure.error.message)
-                      : "EmailJS send failed.";
-                    showToast(`Order saved. Email failed: ${errorMessage.slice(0, 140)}`);
+                    console.warn("[OrderEmail] Admin notification failed or skipped", emailResult);
                   }
                 } catch (error) {
-                  console.warn("EmailJS send failed.", error);
-                  const message = error && error.message ? String(error.message) : "EmailJS send failed.";
-                  showToast(`Order saved. Email failed: ${message.slice(0, 140)}`);
+                  console.warn("[OrderEmail] Admin notification threw", error);
                 }
-              } else if (window.AaruniEmail && window.AaruniEmail.isEmailConfigured) {
-                console.warn("EmailJS is not configured.");
+              } else {
+                console.warn("[OrderEmail] Supabase notification helper is unavailable.");
               }
 
               return;
@@ -625,15 +622,9 @@ function startRazorpayCheckout() {
           }
         }
 
-        // Fallback: keep existing EmailJS notifications for static-only deployments.
+        // Static-only fallback: keep a local copy, but do not send order email without a successful DB save.
         window.AaruniOrders.saveOrder(orderDraft);
         showToast(`Order placed: ${orderDraft.id}`);
-
-        if (window.AaruniEmail) {
-          window.AaruniEmail
-            .sendOrderEmails(orderDraft)
-            .catch((error) => console.warn("EmailJS notification failed.", error));
-        }
       };
 
       cartItems = [];

@@ -3,6 +3,8 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 let supabaseClient = null;
 
 const ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
+const ORDER_EMAIL_FUNCTION_NAME = "send-order-notification";
+const ORDER_EMAIL_STORAGE_PREFIX = "aaruniOrderEmailNotification:";
 
 console.log("[Supabase] Backend init", {
   url: window.SUPABASE_URL,
@@ -346,6 +348,137 @@ function buildProductsJsonbPayload(items) {
     .filter((item) => item.product_id && item.quantity > 0);
 
   return JSON.parse(JSON.stringify(products));
+}
+
+function getOrderPaymentId(order) {
+  return String((order && order.payment && order.payment.id) || order.paymentId || order.payment_id || "").trim();
+}
+
+function getOrderEmailNotificationKey(order) {
+  const orderId = String((order && order.id) || order.order_id || "").trim();
+  const paymentId = getOrderPaymentId(order);
+
+  return orderId && paymentId ? `${orderId}:${paymentId}` : "";
+}
+
+function hasStoredOrderEmailNotification(key) {
+  if (!key) return false;
+
+  try {
+    return window.localStorage.getItem(`${ORDER_EMAIL_STORAGE_PREFIX}${key}`) === "sent";
+  } catch (error) {
+    return false;
+  }
+}
+
+function storeOrderEmailNotification(key) {
+  if (!key) return;
+
+  try {
+    window.localStorage.setItem(`${ORDER_EMAIL_STORAGE_PREFIX}${key}`, "sent");
+  } catch (error) {
+    // Storage can be unavailable in private browsing; server idempotency still protects sends.
+  }
+}
+
+function buildOrderNotificationPayload(order) {
+  const items = Array.isArray(order && order.items)
+    ? order.items.map((item) => ({
+        id: String(item.id || item.product_id || "").trim(),
+        name: String(item.name || "Product").trim(),
+        quantity: Number(item.quantity || 0),
+        price: Number(item.price || 0),
+        line_total: Number(item.lineTotal ?? item.line_total ?? 0),
+      }))
+    : [];
+
+  return {
+    order: {
+      id: String((order && order.id) || order.order_id || "").trim(),
+      created_at: (order && (order.createdAt || order.created_at)) || new Date().toISOString(),
+      order_date: (order && order.orderDate) || "",
+      order_time: (order && order.orderTime) || "",
+      customer: {
+        name: String((order && order.buyer && order.buyer.name) || order.customer_name || "Customer").trim(),
+        email: String((order && order.buyer && order.buyer.email) || order.customer_email || "").trim(),
+        phone: String((order && order.buyer && order.buyer.phone) || order.phone || "").trim(),
+        shipping_address: String(
+          (order && order.buyer && order.buyer.address) ||
+            order.shipping_address ||
+            ""
+        ).trim(),
+      },
+      payment: {
+        id: getOrderPaymentId(order),
+        status: String((order && order.payment && order.payment.status) || order.payment_status || "Paid").trim(),
+      },
+      items,
+      total_quantity: Number((order && order.totalQuantity) || order.quantity || 0),
+      total_amount: Number((order && order.totalAmount) || order.total_amount || order.total_price || 0),
+    },
+  };
+}
+
+async function sendOrderNotificationEmail(order) {
+  if (!isConfigured()) {
+    return { ok: false, skipped: true, reason: "Supabase is not configured." };
+  }
+
+  const notificationKey = getOrderEmailNotificationKey(order);
+  const orderId = String((order && order.id) || order.order_id || "").trim();
+  const paymentId = getOrderPaymentId(order);
+  const paymentStatus = String((order && order.payment && order.payment.status) || order.payment_status || "").toLowerCase();
+
+  if (!orderId || !paymentId || paymentId === "not available") {
+    return { ok: false, skipped: true, reason: "Missing order ID or payment ID for email notification." };
+  }
+
+  if (paymentStatus && paymentStatus !== "paid") {
+    return { ok: false, skipped: true, reason: `Payment status is ${paymentStatus}.` };
+  }
+
+  if (hasStoredOrderEmailNotification(notificationKey)) {
+    return { ok: true, skipped: true, duplicate: true, reason: "Order notification already sent from this browser." };
+  }
+
+  const client = getClient();
+  const payload = buildOrderNotificationPayload(order);
+
+  console.info("[OrderEmail] Invoking send-order-notification", {
+    orderId,
+    paymentId,
+    functionName: ORDER_EMAIL_FUNCTION_NAME,
+  });
+
+  try {
+    const { data, error } = await client.functions.invoke(ORDER_EMAIL_FUNCTION_NAME, {
+      body: payload,
+    });
+
+    if (error) {
+      const status = error && error.context && error.context.status ? Number(error.context.status) : 0;
+      const details = toSupabaseErrorDetails(error);
+
+      if (status === 404) {
+        return {
+          ok: false,
+          skipped: true,
+          reason: "Order email Edge Function is not deployed.",
+          details,
+        };
+      }
+
+      return { ok: false, error: toSafeMessage(error), details };
+    }
+
+    if (data && (data.ok || data.duplicate)) {
+      storeOrderEmailNotification(notificationKey);
+    }
+
+    return data || { ok: false, error: "Empty email function response." };
+  } catch (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
 }
 
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
@@ -726,6 +859,7 @@ async function fetchOrderByOrderId(orderId) {
 window.AaruniSupabaseBackend = {
   isConfigured,
   saveOrderAfterPayment,
+  sendOrderNotificationEmail,
   listOrdersForCustomer,
   fetchOrderByOrderId,
   ORDER_STATUSES,

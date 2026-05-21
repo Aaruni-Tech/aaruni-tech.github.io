@@ -2,6 +2,7 @@
 firebase-debug.log
 node_modules/
 .firebase/
+supabase/.temp/
 
 # repo stray files
 main

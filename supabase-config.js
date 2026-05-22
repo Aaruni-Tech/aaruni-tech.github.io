@@ -1,53 +1,45 @@
 (function () {
-  const DEFAULT_SUPABASE_URL = "https://cnsmgxgkxgbeumnvidpk.supabase.co";
-  const DEFAULT_SUPABASE_ANON_KEY = "sb_publishable_pUKXR4zuaQSg9UA5t5Oz9Q_sR4mCiI0";
+  const config = window.AARUNI_CONFIG || {};
+  const supabaseConfig = config.supabase || {};
 
-  const LOCAL_URL = localStorage.getItem("AARUNI_SUPABASE_URL");
-  const LOCAL_KEY = localStorage.getItem("AARUNI_SUPABASE_ANON_KEY");
-  const normalizedLocalUrl = (LOCAL_URL || "").trim().replace(/\/+$/, "");
-  const expectedHost = new URL(DEFAULT_SUPABASE_URL).hostname;
+  function isPlaceholder(value) {
+    const raw = String(value || "").trim();
+    return !raw || raw.includes("YOUR_") || raw.includes("REPLACE_WITH");
+  }
 
-  let cachedUrlAllowed = false;
-  if (normalizedLocalUrl) {
+  const configuredUrl = String(supabaseConfig.url || window.SUPABASE_URL || "").trim().replace(/\/+$/, "");
+  const configuredAnonKey = String(supabaseConfig.anonKey || window.SUPABASE_ANON_KEY || "").trim();
+
+  window.SUPABASE_URL = isPlaceholder(configuredUrl) ? "" : configuredUrl;
+  window.SUPABASE_ANON_KEY = isPlaceholder(configuredAnonKey) ? "" : configuredAnonKey;
+
+  let urlValid = false;
+  if (window.SUPABASE_URL) {
     try {
-      cachedUrlAllowed = new URL(normalizedLocalUrl).hostname === expectedHost;
+      const parsedUrl = new URL(window.SUPABASE_URL);
+      urlValid = parsedUrl.protocol === "https:" && parsedUrl.hostname.endsWith(".supabase.co");
     } catch (error) {
-      cachedUrlAllowed = false;
+      urlValid = false;
     }
   }
 
-  if (normalizedLocalUrl && !cachedUrlAllowed) {
-    console.warn("[Supabase] Ignoring cached Supabase URL that does not match production", normalizedLocalUrl);
-    localStorage.removeItem("AARUNI_SUPABASE_URL");
-  }
-
-  window.SUPABASE_URL =
-    normalizedLocalUrl && cachedUrlAllowed
-      ? normalizedLocalUrl
-      : DEFAULT_SUPABASE_URL;
-
-  window.SUPABASE_ANON_KEY =
-    LOCAL_KEY ||
-    DEFAULT_SUPABASE_ANON_KEY;
-
-  let urlValid = false;
-  try {
-    const parsedUrl = new URL(window.SUPABASE_URL);
-    urlValid = parsedUrl.protocol === "https:" && parsedUrl.hostname.endsWith(".supabase.co");
-  } catch (error) {
-    urlValid = false;
-  }
-
   console.log("[Supabase] Public config loaded", {
+    mode: config.mode || "unknown",
     hasUrl: !!window.SUPABASE_URL,
     hasKey: !!window.SUPABASE_ANON_KEY,
     url: window.SUPABASE_URL,
     urlValid
   });
 
-  console.log("Supabase URL:", window.SUPABASE_URL);
-
   if (!urlValid) {
-    console.error("[Supabase] Invalid Supabase URL", window.SUPABASE_URL);
+    if (window.SUPABASE_URL) {
+      console.error("[Supabase] Invalid Supabase URL", window.SUPABASE_URL);
+    } else {
+      console.warn("[Supabase] No public Supabase URL configured for this environment.");
+    }
+  }
+
+  if (!window.SUPABASE_ANON_KEY) {
+    console.warn("[Supabase] No public Supabase anon key configured for this environment.");
   }
 })();

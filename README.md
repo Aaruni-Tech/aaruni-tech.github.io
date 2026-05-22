@@ -6,11 +6,28 @@ The site is designed for `https://aaruni-tech.github.io`. The storefront remains
 
 For payment alerts, use the Google Apps Script webhook in `docs/razorpay-gmail-webhook.gs` and point Razorpay webhook events at it. That path can email `tech.aaruni@gmail.com` when a payment is captured.
 
-Checkout uses Razorpay's browser checkout script with the public test key ID in `script.js`. Do not put the Razorpay key secret in this repository, `index.html`, or `script.js`; the secret belongs only in Razorpay, Apps Script properties, or a private backend/serverless function.
+Checkout reads the active Razorpay public key ID from `aaruni-config.js`. Do not put the Razorpay key secret in this repository, `index.html`, `script.js`, or any other frontend file; the secret belongs only in Razorpay, Apps Script properties, or a private backend/serverless function.
 
 For production checkout, move order creation and payment signature verification to a backend or serverless function before fulfilling orders. Client-side amounts can be edited by visitors, so Razorpay dashboard/webhook confirmation should be treated as the source of truth.
 
 Production admin order emails are sent through the Supabase Edge Function in `supabase/functions/send-order-notification`. Configure it with Resend using `docs/order-email-notifications.md`; do not put Resend or Supabase service-role secrets in frontend JavaScript.
+
+## Environment Switching
+
+All browser-safe environment settings live in `aaruni-config.js`.
+
+Switch modes with the single toggle near the top of that file:
+
+```js
+const ENV = "development";
+```
+
+- `development`: Supabase DEV config, Razorpay test key, test products, and EmailJS testing templates.
+- `production`: Supabase PROD config, Razorpay live key ID, production products, and real order emails through the Supabase Edge Function.
+
+Fill the DEV Supabase values, EmailJS testing IDs, and Razorpay live key ID before relying on those paths.
+
+Only public values are allowed in `aaruni-config.js`: Supabase URL, Supabase anon/publishable key, Razorpay key ID, and EmailJS public IDs. Never add Supabase service-role keys, Razorpay key secrets, Resend API keys, webhook secrets, or other private credentials to this GitHub Pages repo.
 
 ## How to Run Locally
 
@@ -31,6 +48,13 @@ http://localhost:8000
 For the repository `aaruni-tech.github.io`, GitHub Pages can serve this site directly from the repository root. Make sure these files are committed to the default branch:
 
 - `index.html`
+- `aaruni-config.js`
+- `supabase-config.js`
+- `emailjs-config.js`
+- `supabase-backend.js`
+- `email.js`
+- `order.js`
+- `my-orders.js`
 - `styles.css`
 - `script.js`
 - `pwa.js`

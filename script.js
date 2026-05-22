@@ -1,119 +1,12 @@
-const products = [
-  {
-    id: "nova-phone-lite",
-    name: "Nova Phone Lite 5G",
-    category: "Mobiles",
-    price: 12999,
-    rating: 4.4,
-    description: "A balanced 5G phone with smooth display and all-day battery life.",
-    image: "",
-  },
-  {
-    id: "spark-phone-max",
-    name: "Spark Phone Max",
-    category: "Mobiles",
-    price: 17999,
-    rating: 4.5,
-    description: "Large screen, fast charging, and dependable cameras for daily use.",
-    image: "",
-  },
-  {
-    id: "airbuds-prime",
-    name: "AirBuds Prime ANC",
-    category: "Audio",
-    price: 2499,
-    rating: 4.6,
-    description: "Noise control earbuds with clear calls and pocket-friendly charging.",
-    image: "",
-  },
-  {
-    id: "soundbar-mini",
-    name: "SoundBar Mini 60W",
-    category: "Audio",
-    price: 3999,
-    rating: 4.3,
-    description: "Compact TV audio upgrade for bedrooms, hostels, and small apartments.",
-    image: "",
-  },
-  {
-    id: "workmate-laptop",
-    name: "WorkMate Laptop 14",
-    category: "Computing",
-    price: 38999,
-    rating: 4.4,
-    description: "Lightweight laptop for study, office work, browsing, and video calls.",
-    image: "",
-  },
-  {
-    id: "usb-c-hub",
-    name: "6-in-1 USB-C Hub",
-    category: "Computing",
-    price: 1599,
-    rating: 4.2,
-    description: "Connect display, storage, and cards with one slim travel adapter.",
-    image: "",
-  },
-  {
-    id: "smart-bulb-pack",
-    name: "Smart Bulb Duo Pack",
-    category: "Smart Home",
-    price: 1199,
-    rating: 4.1,
-    description: "Warm and cool lighting presets for living rooms and study spaces.",
-    image: "",
-  },
-  {
-    id: "security-camera",
-    name: "HomeGuard Wi-Fi Camera",
-    category: "Smart Home",
-    price: 2199,
-    rating: 4.5,
-    description: "Indoor security camera with motion alerts and night visibility.",
-    image: "",
-  },
-  {
-    id: "power-bank-pro",
-    name: "Aaruni Power Bank Pro",
-    category: "Accessories",
-    price: 1799,
-    rating: 4.7,
-    description: "20,000 mAh backup power with dual USB output and slim carry design.",
-    image: "",
-  },
-  {
-    id: "fast-charger",
-    name: "RapidCharge 65W Adapter",
-    category: "Accessories",
-    price: 1499,
-    rating: 4.3,
-    description: "Fast wall charger for compatible phones, tablets, and laptops.",
-    image: "",
-  },
-  {
-    id: "keyboard-mouse",
-    name: "QuietKey Keyboard Mouse Set",
-    category: "Computing",
-    price: 1299,
-    rating: 4.2,
-    description: "Wireless desk combo with soft keys and precise everyday tracking.",
-    image: "",
-  },
-  {
-    id: "neckband-sport",
-    name: "Pulse Neckband Sport",
-    category: "Audio",
-    price: 999,
-    rating: 4.1,
-    description: "Lightweight neckband for calls, workouts, and long commute playlists.",
-    image: "",
-  },
-];
-
+const AARUNI_APP_CONFIG = window.AARUNI_CONFIG || {};
+const AARUNI_RAZORPAY_CONFIG = AARUNI_APP_CONFIG.razorpay || {};
+const AARUNI_EMAIL_ENV_CONFIG = AARUNI_APP_CONFIG.email || {};
+const products = Array.isArray(AARUNI_APP_CONFIG.products) ? AARUNI_APP_CONFIG.products : [];
 const CART_STORAGE_KEY = "aaruniTechCart";
 const SIGNUP_STORAGE_KEY = "aaruniTechSignupProfile";
-const RAZORPAY_KEY_ID = "rzp_test_SpYO2ojU9ZzsNG";
-const RAZORPAY_BUSINESS_NAME = "Aaruni Tech";
-const RAZORPAY_SUPPORT_EMAIL = "tech.aaruni@gmail.com";
+const RAZORPAY_KEY_ID = AARUNI_RAZORPAY_CONFIG.keyId || window.RAZORPAY_KEY_ID || "";
+const RAZORPAY_BUSINESS_NAME = AARUNI_RAZORPAY_CONFIG.businessName || window.RAZORPAY_BUSINESS_NAME || "Aaruni Tech";
+const RAZORPAY_SUPPORT_EMAIL = AARUNI_RAZORPAY_CONFIG.supportEmail || window.RAZORPAY_SUPPORT_EMAIL || "tech.aaruni@gmail.com";
 
 const productGrid = document.querySelector("#productGrid");
 const resultSummary = document.querySelector("#resultSummary");
@@ -448,11 +341,85 @@ function isCheckoutProfileComplete(profile) {
   return Boolean(profile.name && profile.email && profile.phone && getDeliveryAddress(profile));
 }
 
+function getRazorpayConfigError() {
+  const key = String(RAZORPAY_KEY_ID || "").trim();
+
+  if (!key || key.includes("YOUR_") || key.includes("REPLACE_WITH")) {
+    return `${AARUNI_APP_CONFIG.label || "Selected"} Razorpay key_id is not configured.`;
+  }
+
+  if (AARUNI_APP_CONFIG.isProduction && !key.startsWith("rzp_live_")) {
+    return "Production mode must use a Razorpay live key_id.";
+  }
+
+  if (!AARUNI_APP_CONFIG.isProduction && !key.startsWith("rzp_test_")) {
+    return "Development mode must use a Razorpay test key_id.";
+  }
+
+  return "";
+}
+
+async function sendConfiguredOrderEmail(order) {
+  const provider = String(AARUNI_EMAIL_ENV_CONFIG.provider || "").trim();
+
+  if (provider === "emailjs") {
+    if (window.AaruniEmail && window.AaruniEmail.sendOrderEmails) {
+      console.info("[OrderEmail] Sending development EmailJS order email", {
+        orderId: order.id,
+        mode: AARUNI_APP_CONFIG.mode || "unknown",
+      });
+      const emailResult = await window.AaruniEmail.sendOrderEmails(order);
+      console.info("[OrderEmail] EmailJS result", emailResult);
+      return emailResult;
+    }
+
+    console.warn("[OrderEmail] EmailJS provider selected but helper is unavailable.");
+    return { ok: false, skipped: true, reason: "EmailJS helper is unavailable." };
+  }
+
+  if (provider === "supabase-edge-function") {
+    if (window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.sendOrderNotificationEmail) {
+      console.info("[OrderEmail] Sending production order notification", { orderId: order.id });
+      const emailResult = await window.AaruniSupabaseBackend.sendOrderNotificationEmail(order);
+      console.info("[OrderEmail] sendOrderNotificationEmail result", emailResult);
+
+      if (emailResult && emailResult.ok) {
+        console.info("[OrderEmail] Admin notification accepted", {
+          orderId: order.id,
+          duplicate: Boolean(emailResult.duplicate),
+          skipped: Boolean(emailResult.skipped),
+        });
+      } else if (emailResult && emailResult.skipped) {
+        console.info("[OrderEmail] Admin notification skipped", emailResult);
+      } else {
+        console.warn("[OrderEmail] Admin notification failed or skipped", emailResult);
+      }
+
+      return emailResult;
+    }
+
+    console.warn("[OrderEmail] Supabase notification helper is unavailable.");
+    return { ok: false, skipped: true, reason: "Supabase notification helper is unavailable." };
+  }
+
+  console.info("[OrderEmail] No order email provider configured", {
+    provider,
+    mode: AARUNI_APP_CONFIG.mode || "unknown",
+  });
+  return { ok: false, skipped: true, reason: "No order email provider configured." };
+}
+
 function startRazorpayCheckout() {
   const amount = getCartSubtotal();
 
   if (amount <= 0) {
     showToast("Add at least one product before checkout.");
+    return;
+  }
+
+  const razorpayConfigError = getRazorpayConfigError();
+  if (razorpayConfigError) {
+    showToast(razorpayConfigError);
     return;
   }
 
@@ -549,28 +516,10 @@ function startRazorpayCheckout() {
               window.AaruniOrders.saveOrder(result.order);
               showToast(`Order placed: ${result.order.id}`);
 
-              if (window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.sendOrderNotificationEmail) {
-                try {
-                  console.info("[OrderEmail] Sending admin order notification", { orderId: result.order.id });
-                  const emailResult = await window.AaruniSupabaseBackend.sendOrderNotificationEmail(result.order);
-                  console.info("[OrderEmail] sendOrderNotificationEmail result", emailResult);
-
-                  if (emailResult && emailResult.ok) {
-                    console.info("[OrderEmail] Admin notification accepted", {
-                      orderId: result.order.id,
-                      duplicate: Boolean(emailResult.duplicate),
-                      skipped: Boolean(emailResult.skipped),
-                    });
-                  } else if (emailResult && emailResult.skipped) {
-                    console.info("[OrderEmail] Admin notification skipped", emailResult);
-                  } else {
-                    console.warn("[OrderEmail] Admin notification failed or skipped", emailResult);
-                  }
-                } catch (error) {
-                  console.warn("[OrderEmail] Admin notification threw", error);
-                }
-              } else {
-                console.warn("[OrderEmail] Supabase notification helper is unavailable.");
+              try {
+                await sendConfiguredOrderEmail(result.order);
+              } catch (error) {
+                console.warn("[OrderEmail] Configured order email threw", error);
               }
 
               return;
@@ -622,9 +571,18 @@ function startRazorpayCheckout() {
           }
         }
 
-        // Static-only fallback: keep a local copy, but do not send order email without a successful DB save.
+        // Static-only fallback: keep a local copy. Development may send EmailJS test
+        // emails here; production real emails still require a successful Supabase save.
         window.AaruniOrders.saveOrder(orderDraft);
         showToast(`Order placed: ${orderDraft.id}`);
+
+        if (AARUNI_EMAIL_ENV_CONFIG.provider === "emailjs") {
+          try {
+            await sendConfiguredOrderEmail(orderDraft);
+          } catch (error) {
+            console.warn("[OrderEmail] Development EmailJS fallback threw", error);
+          }
+        }
       };
 
       cartItems = [];

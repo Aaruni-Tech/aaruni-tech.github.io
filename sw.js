@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.05.21.2";
+const APP_VERSION = "2026.05.22.2";
 const CACHE_NAME = `aaruni-tech-${APP_VERSION}`;
 
 const APP_SHELL = [
@@ -13,6 +13,7 @@ const APP_SHELL = [
   "/shipping-policy.html",
   "/terms-and-conditions.html",
   "/styles.css",
+  "/aaruni-config.js",
   "/script.js",
   "/order.js",
   "/email.js",
@@ -24,6 +25,9 @@ const APP_SHELL = [
   "/pwa.js",
   "/manifest.webmanifest",
   "/version.json",
+  "/favicon.ico",
+  "/favicon-16x16.png",
+  "/favicon-32x32.png",
   "/icons/icon-192.png",
   "/icons/icon-512.png",
   "/icons/apple-touch-icon.png"

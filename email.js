@@ -1,9 +1,10 @@
+const AARUNI_ACTIVE_EMAIL_CONFIG = (window.AARUNI_CONFIG && window.AARUNI_CONFIG.email) || {};
 const AARUNI_EMAIL_CONFIG = {
   publicKey: window.EMAILJS_PUBLIC_KEY || "YOUR_EMAILJS_PUBLIC_KEY",
   serviceId: window.EMAILJS_SERVICE_ID || "YOUR_EMAILJS_SERVICE_ID",
   buyerTemplateId: window.EMAILJS_BUYER_TEMPLATE_ID || "YOUR_BUYER_TEMPLATE_ID",
   sellerTemplateId: window.EMAILJS_SELLER_TEMPLATE_ID || "YOUR_SELLER_TEMPLATE_ID",
-  sellerEmail: "tech.aaruni@gmail.com",
+  sellerEmail: AARUNI_ACTIVE_EMAIL_CONFIG.sellerEmail || "tech.aaruni@gmail.com",
 };
 
 let emailJsInitialized = false;

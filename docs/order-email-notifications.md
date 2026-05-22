@@ -16,20 +16,20 @@ supabase secrets set \
   RESEND_API_KEY="re_xxxxxxxxx" \
   RESEND_FROM_EMAIL="Aaruni Tech <orders@your-verified-domain.com>" \
   ORDER_NOTIFICATION_TO_EMAIL="tech.aaruni@gmail.com" \
-  --project-ref cnsmgxgkxgbeumnvidpk
+  --project-ref fxoofgnhbvquenbfhdec
 ```
 
 4. Deploy the function:
 
 ```sh
-supabase functions deploy send-order-notification --project-ref cnsmgxgkxgbeumnvidpk
+supabase functions deploy send-order-notification --project-ref fxoofgnhbvquenbfhdec
 ```
 
 For this static GitHub Pages checkout, deploy it with the public invocation flag so the browser can call it after payment:
 
 ```sh
 supabase functions deploy send-order-notification \
-  --project-ref cnsmgxgkxgbeumnvidpk \
+  --project-ref fxoofgnhbvquenbfhdec \
   --use-api \
   --no-verify-jwt
 ```

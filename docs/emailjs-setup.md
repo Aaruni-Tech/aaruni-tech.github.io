@@ -1,6 +1,7 @@
 # EmailJS order email setup
 
-This project uses EmailJS for static-site order emails from GitHub Pages.
+This project uses EmailJS for development/testing order emails from GitHub Pages.
+Production order emails use the Supabase Edge Function described in `docs/order-email-notifications.md`.
 
 ## Files
 
@@ -18,13 +19,13 @@ This project uses EmailJS for static-site order emails from GitHub Pages.
    - Seller new order alert
 4. Copy the buyer template HTML from `docs/emailjs-buyer-template.html`.
 5. Copy the seller template HTML from `docs/emailjs-seller-template.html`.
-6. In `emailjs-config.js`, set:
+6. In the `development.email` block in `aaruni-config.js`, set:
 
 ```js
-window.EMAILJS_PUBLIC_KEY = "YOUR_PUBLIC_KEY";
-window.EMAILJS_SERVICE_ID = "YOUR_SERVICE_ID";
-window.EMAILJS_BUYER_TEMPLATE_ID = "YOUR_BUYER_TEMPLATE_ID";
-window.EMAILJS_SELLER_TEMPLATE_ID = "YOUR_SELLER_TEMPLATE_ID";
+publicKey: "YOUR_PUBLIC_KEY",
+serviceId: "YOUR_SERVICE_ID",
+buyerTemplateId: "YOUR_TESTING_TEMPLATE_ID",
+sellerTemplateId: "YOUR_TESTING_TEMPLATE_ID",
 ```
 
 7. In EmailJS account security settings, restrict the allowed origin to:
@@ -75,12 +76,13 @@ Both templates receive these variables:
 
 ## Testing
 
-1. Replace the EmailJS placeholders in `emailjs-config.js`.
-2. Open `index.html` locally or on GitHub Pages.
-3. Sign up with name, email, phone, and delivery address.
-4. Add a product to cart.
-5. Complete Razorpay test checkout.
-6. Check:
+1. Set `const ENV = "development";` in `aaruni-config.js`.
+2. Replace the development EmailJS placeholders in `aaruni-config.js`.
+3. Open `index.html` locally or on GitHub Pages.
+4. Sign up with name, email, phone, and delivery address.
+5. Add a product to cart.
+6. Complete Razorpay test checkout.
+7. Check:
    - Buyer inbox receives the confirmation email.
    - Seller/admin inbox receives the new order alert.
    - Order appears in the account order history on the same browser.
@@ -88,7 +90,7 @@ Both templates receive these variables:
 
 ## Common mistakes
 
-- Leaving placeholder IDs in `emailjs-config.js`.
+- Leaving placeholder IDs in `aaruni-config.js`.
 - Creating only one EmailJS template instead of buyer and seller templates.
 - Forgetting to set the buyer template recipient to `{{to_email}}`.
 - Forgetting to set the seller template recipient to `{{seller_email}}`.

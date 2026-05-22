@@ -25,9 +25,9 @@ Supabase Dashboard → **Table Editor** → `products` → **Insert row**:
 
 ## 3) Connect your frontend (safe keys only)
 
-Put these in `supabase-config.js`:
-- `window.SUPABASE_URL`
-- `window.SUPABASE_ANON_KEY`
+Put these public values in the matching environment block in `aaruni-config.js`:
+- `supabase.url`
+- `supabase.anonKey`
 
 Never ship the Supabase **service role** key in a frontend repo.
 
@@ -42,6 +42,7 @@ The Aaruni Tech checkout uses `supabase-backend.js` and will automatically call 
 ### Example usage
 
 Load scripts:
+- `aaruni-config.js`
 - `supabase-config.js`
 - `ecommerce-backend.js` (module)
 - `ecommerce-frontend.js`

@@ -1,5 +1,5 @@
 -- Aaruni Tech - FINAL production-safe Supabase schema fix (idempotent)
--- Run in Supabase Dashboard -> SQL Editor against project cnsmgxgkxgbeumnvidpk.
+-- Run in Supabase Dashboard -> SQL Editor against project fxoofgnhbvquenbfhdec.
 -- Fixes checkout schema-cache failures without deleting existing production data.
 
 begin;

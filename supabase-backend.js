@@ -3,7 +3,11 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 let supabaseClient = null;
 
 const ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
-const ORDER_EMAIL_FUNCTION_NAME = "send-order-notification";
+const ORDER_EMAIL_FUNCTION_NAME =
+  (window.AARUNI_CONFIG &&
+    window.AARUNI_CONFIG.email &&
+    window.AARUNI_CONFIG.email.orderNotificationFunctionName) ||
+  "send-order-notification";
 const ORDER_EMAIL_STORAGE_PREFIX = "aaruniOrderEmailNotification:";
 
 console.log("[Supabase] Backend init", {

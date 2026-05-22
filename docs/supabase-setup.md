@@ -20,14 +20,15 @@ It also enables RLS and allows **insert-only** from the browser (no reads/update
 
 Edit:
 
-- `supabase-config.js`
+- `aaruni-config.js`
 
 Set:
 
-- `window.SUPABASE_URL`
-- `window.SUPABASE_ANON_KEY`
+- the active environment's `supabase.url`
+- the active environment's `supabase.anonKey`
 
 Get both from Supabase Dashboard → **Project Settings** → **API**.
+Use the DEV project values under `development` and the PROD project values under `production`.
 
 ## 3) Verify
 
@@ -36,4 +37,3 @@ Get both from Supabase Dashboard → **Project Settings** → **API**.
 3. Complete Razorpay checkout (test mode)
 4. Confirm you see a success toast after the order is saved
 5. In Supabase, check table rows in **Table Editor**
-

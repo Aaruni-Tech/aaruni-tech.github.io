@@ -74,6 +74,8 @@ alter table public.orders add column if not exists cart_items jsonb not null def
 alter table public.orders add column if not exists payment_id text;
 alter table public.orders add column if not exists status text not null default 'Order Confirmed';
 alter table public.orders add column if not exists currency text not null default 'INR';
+alter table public.orders add column if not exists customer_email_sent boolean not null default false;
+alter table public.orders add column if not exists customer_email_sent_at timestamptz;
 
 create index if not exists idx_orders_created_at on public.orders(created_at desc);
 create index if not exists idx_orders_order_id on public.orders(order_id);
@@ -84,18 +86,24 @@ create table if not exists public.order_email_notifications (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   idempotency_key text not null unique,
+  email_type text not null default 'admin',
   order_id text not null,
   payment_id text,
   recipient_email text not null default 'tech.aaruni@gmail.com',
   provider text not null default 'resend',
   provider_message_id text,
   status text not null default 'sending',
+  sent_at timestamptz,
   error text
 );
+
+alter table public.order_email_notifications add column if not exists email_type text not null default 'admin';
+alter table public.order_email_notifications add column if not exists sent_at timestamptz;
 
 create index if not exists idx_order_email_notifications_order_id on public.order_email_notifications(order_id);
 create index if not exists idx_order_email_notifications_payment_id on public.order_email_notifications(payment_id);
 create index if not exists idx_order_email_notifications_status on public.order_email_notifications(status);
+create index if not exists idx_order_email_notifications_email_type on public.order_email_notifications(email_type);
 
 -- RPC cleanup + canonical production checkout function.
 do $$

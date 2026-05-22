@@ -1,12 +1,14 @@
 # Production order email notifications
 
-Checkout sends the admin email through a Supabase Edge Function named `send-order-notification`.
+Checkout sends the admin email and the customer confirmation email through a Supabase Edge Function named `send-order-notification`.
 The frontend invokes it only after Razorpay succeeds and Supabase order save returns `ok: true`.
 
 ## Required setup
 
 1. Run `docs/supabase-production-schema-fix.sql` in the Supabase SQL Editor.
    - This creates `public.order_email_notifications`.
+   - It adds `email_type` and `sent_at` for retry-safe admin/customer email logs.
+   - It adds `orders.customer_email_sent` and `orders.customer_email_sent_at`.
    - It also reloads the PostgREST schema cache.
 2. Create and verify a sender domain in Resend.
 3. Set Edge Function secrets in Supabase:
@@ -43,8 +45,9 @@ JavaScript.
 The Edge Function uses:
 
 - `public.order_email_notifications.idempotency_key` with a unique constraint.
+- Separate idempotency keys for `admin` and `customer` email types.
 - Resend's `Idempotency-Key` request header.
-- Browser localStorage as a client-side fast path after the function accepts a notification.
+- Browser localStorage as a client-side fast path only after both emails are complete.
 
 Refreshing the order page or retrying the same checkout result should not send another email.
 
@@ -53,6 +56,9 @@ Refreshing the order page or retrying the same checkout result should not send a
 After deployment, complete a real checkout and confirm:
 
 - A row is inserted into `public.orders`.
-- A row is inserted into `public.order_email_notifications` with `status = 'sent'`.
-- The email arrives at `tech.aaruni@gmail.com`.
+- Two rows are inserted into `public.order_email_notifications` with `email_type in ('admin', 'customer')` and `status = 'sent'`.
+- `public.orders.customer_email_sent = true` for the order.
+- The admin email arrives at `tech.aaruni@gmail.com`.
+- The customer confirmation email arrives at the checkout email address.
+- Edge Function logs show `[Email] Admin email sent` and `[Email] Customer confirmation sent`.
 - Browser console shows `[OrderEmail] Admin notification accepted` and no new errors.

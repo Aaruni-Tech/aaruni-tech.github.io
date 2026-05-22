@@ -67,6 +67,8 @@ alter table public.orders add column if not exists currency text;
 alter table public.orders add column if not exists order_at timestamptz;
 alter table public.orders add column if not exists cart_items jsonb;
 alter table public.orders add column if not exists products jsonb;
+alter table public.orders add column if not exists customer_email_sent boolean not null default false;
+alter table public.orders add column if not exists customer_email_sent_at timestamptz;
 
 -- Convert an older text `orders.products` column to jsonb safely.
 do $$
@@ -147,18 +149,25 @@ create table if not exists public.order_email_notifications (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   idempotency_key text not null unique,
+  email_type text not null default 'admin',
   order_id text not null,
   payment_id text,
   recipient_email text not null default 'tech.aaruni@gmail.com',
   provider text not null default 'resend',
   provider_message_id text,
   status text not null default 'sending',
+  sent_at timestamptz,
   error text
 );
+
+alter table public.order_email_notifications add column if not exists email_type text not null default 'admin';
+alter table public.order_email_notifications add column if not exists sent_at timestamptz;
+update public.order_email_notifications set email_type = 'admin' where email_type is null or trim(email_type) = '';
 
 create index if not exists idx_order_email_notifications_order_id on public.order_email_notifications(order_id);
 create index if not exists idx_order_email_notifications_payment_id on public.order_email_notifications(payment_id);
 create index if not exists idx_order_email_notifications_status on public.order_email_notifications(status);
+create index if not exists idx_order_email_notifications_email_type on public.order_email_notifications(email_type);
 
 -- 4) Products compatibility columns. The live table currently has legacy names like
 -- "product name", "product id", "image url", and "discription"; keep them and add canonical names.

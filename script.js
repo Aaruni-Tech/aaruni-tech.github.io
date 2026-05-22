@@ -383,16 +383,19 @@ async function sendConfiguredOrderEmail(order) {
       const emailResult = await window.AaruniSupabaseBackend.sendOrderNotificationEmail(order);
       console.info("[OrderEmail] sendOrderNotificationEmail result", emailResult);
 
-      if (emailResult && emailResult.ok) {
-        console.info("[OrderEmail] Admin notification accepted", {
+      if (emailResult && emailResult.ok && emailResult.complete !== false) {
+        console.info("[OrderEmail] Order emails accepted", {
           orderId: order.id,
           duplicate: Boolean(emailResult.duplicate),
           skipped: Boolean(emailResult.skipped),
+          emails: emailResult.emails || [],
         });
+      } else if (emailResult && emailResult.ok && emailResult.complete === false) {
+        console.warn("[OrderEmail] One or more order emails failed or are pending retry", emailResult);
       } else if (emailResult && emailResult.skipped) {
-        console.info("[OrderEmail] Admin notification skipped", emailResult);
+        console.info("[OrderEmail] Order email notification skipped", emailResult);
       } else {
-        console.warn("[OrderEmail] Admin notification failed or skipped", emailResult);
+        console.warn("[OrderEmail] Order email notification failed or skipped", emailResult);
       }
 
       return emailResult;

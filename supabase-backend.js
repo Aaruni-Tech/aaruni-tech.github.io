@@ -475,7 +475,7 @@ async function sendOrderNotificationEmail(order) {
       return { ok: false, error: toSafeMessage(error), details };
     }
 
-    if (data && (data.ok || data.duplicate)) {
+    if (data && (data.ok || data.duplicate) && data.complete !== false) {
       storeOrderEmailNotification(notificationKey);
     }
 

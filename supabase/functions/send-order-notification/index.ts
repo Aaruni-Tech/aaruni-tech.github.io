@@ -108,6 +108,99 @@ function isUsableEmail(value: string) {
   return Boolean(value && value !== "not provided" && value.includes("@"));
 }
 
+function getErrorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getErrorStack(error: unknown) {
+  return error instanceof Error ? error.stack || "" : "";
+}
+
+function extractEmailAddress(value: string) {
+  const raw = cleanText(value).toLowerCase();
+  const bracketMatch = raw.match(/<([^>]+)>/);
+  return cleanText(bracketMatch ? bracketMatch[1] : raw).toLowerCase();
+}
+
+function isResendTestingSender(value: string) {
+  return extractEmailAddress(value) === "onboarding@resend.dev";
+}
+
+function parseJsonObject(text: string) {
+  if (!text) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(text);
+    return parsed && typeof parsed === "object" ? parsed as Record<string, unknown> : null;
+  } catch (error) {
+    return null;
+  }
+}
+
+function summarizeResendResponse(text: string) {
+  const parsed = parseJsonObject(text);
+
+  if (parsed) {
+    return {
+      id: cleanText(parsed.id),
+      name: cleanText(parsed.name),
+      message: cleanText(parsed.message),
+      error: cleanText(parsed.error),
+      statusCode: cleanText(parsed.statusCode),
+    };
+  }
+
+  return text ? text.slice(0, 1000) : "";
+}
+
+function getEmailRuntimeConfig() {
+  const resendApiKey = Deno.env.get("RESEND_API_KEY") || "";
+  const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "";
+
+  if (!resendApiKey) {
+    throw new Error("Missing required environment variable: RESEND_API_KEY");
+  }
+
+  if (!fromEmail) {
+    throw new Error("Missing required environment variable: RESEND_FROM_EMAIL");
+  }
+
+  return {
+    resendApiKey,
+    fromEmail,
+    adminRecipientEmail: ADMIN_RECIPIENT_EMAIL,
+    orderRecipientEnvPresent: Boolean(Deno.env.get("ORDER_NOTIFICATION_TO_EMAIL")),
+    usingResendTestingSender: isResendTestingSender(fromEmail),
+  };
+}
+
+function logRuntimeConfig(requestId: string) {
+  const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "";
+
+  console.log("[Email] Runtime config", {
+    requestId,
+    hasResendApiKey: Boolean(Deno.env.get("RESEND_API_KEY")),
+    hasSupabaseUrl: Boolean(Deno.env.get("SUPABASE_URL")),
+    hasServiceRoleKey: Boolean(Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")),
+    hasFromEmail: Boolean(fromEmail),
+    fromEmail,
+    adminRecipientEmail: ADMIN_RECIPIENT_EMAIL,
+    orderRecipientEnvPresent: Boolean(Deno.env.get("ORDER_NOTIFICATION_TO_EMAIL")),
+    usingResendTestingSender: isResendTestingSender(fromEmail),
+  });
+
+  if (isResendTestingSender(fromEmail)) {
+    console.warn("[Email] Failure reason", {
+      requestId,
+      reason: "resend_testing_sender_restriction_possible",
+      fromEmail,
+      detail: "onboarding@resend.dev can only deliver to the Resend account email. Use a verified domain sender for admin and customer emails.",
+    });
+  }
+}
+
 function normalizeProducts(products: unknown, fallbackItems: unknown, fallbackProductName: unknown, fallbackQuantity: unknown, fallbackTotal: unknown): OrderItem[] {
   const source = Array.isArray(products)
     ? products
@@ -515,17 +608,16 @@ async function markCustomerEmailSent(supabaseUrl: string, serviceRoleKey: string
 }
 
 async function sendWithResend(content: EmailContent, recipientEmail: string, idempotencyKey: string, order: NormalizedOrder, emailType: EmailType) {
-  const resendApiKey = getRequiredEnv("RESEND_API_KEY");
-  const fromEmail = getRequiredEnv("RESEND_FROM_EMAIL");
+  const emailConfig = getEmailRuntimeConfig();
   const response = await fetch(RESEND_API_URL, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${resendApiKey}`,
+      Authorization: `Bearer ${emailConfig.resendApiKey}`,
       "Content-Type": "application/json",
       "Idempotency-Key": idempotencyKey,
     },
     body: JSON.stringify({
-      from: fromEmail,
+      from: emailConfig.fromEmail,
       to: [recipientEmail],
       subject: content.subject,
       text: content.text,
@@ -538,17 +630,48 @@ async function sendWithResend(content: EmailContent, recipientEmail: string, ide
   });
   const responseText = await response.text();
 
+  console.log("[Email] Resend response", {
+    orderId: order.orderId,
+    emailType,
+    to: recipientEmail,
+    from: emailConfig.fromEmail,
+    status: response.status,
+    ok: response.ok,
+    body: summarizeResendResponse(responseText),
+  });
+
   if (!response.ok) {
-    throw new Error(`Resend send failed: ${responseText || response.status}`);
+    throw new Error(`Resend send failed (${response.status}): ${responseText || response.status}`);
   }
 
-  return responseText ? JSON.parse(responseText) as Record<string, unknown> : {};
+  return parseJsonObject(responseText) || {};
 }
 
 async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: NormalizedOrder, emailType: EmailType): Promise<EmailResult> {
   const recipientEmail = emailType === "admin" ? ADMIN_RECIPIENT_EMAIL : order.customerEmail;
 
+  if (emailType === "admin" && !isUsableEmail(recipientEmail)) {
+    console.error("[Email] Failure reason", {
+      orderId: order.orderId,
+      emailType,
+      recipient: recipientEmail,
+      reason: "invalid_admin_recipient_email",
+    });
+    return {
+      type: emailType,
+      status: "failed",
+      recipient: recipientEmail,
+      error: "invalid_admin_recipient_email",
+    };
+  }
+
   if (emailType === "customer" && !isUsableEmail(recipientEmail)) {
+    console.warn("[Email] Failure reason", {
+      orderId: order.orderId,
+      emailType,
+      recipient: recipientEmail,
+      reason: "missing_customer_email",
+    });
     return {
       type: emailType,
       status: "skipped",
@@ -558,11 +681,39 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
   }
 
   const idempotencyKey = buildIdempotencyKey(order.orderId, order.paymentId, emailType);
+  let notificationLockAvailable = true;
+
+  const recordFailedStatus = async (message: string) => {
+    if (!notificationLockAvailable) {
+      return;
+    }
+
+    try {
+      await updateNotificationStatus(supabaseUrl, serviceRoleKey, idempotencyKey, {
+        status: "failed",
+        error: message.slice(0, 1000),
+      });
+    } catch (statusError) {
+      console.error("[Email] Failure reason", {
+        orderId: order.orderId,
+        emailType,
+        stage: "record_failed_status",
+        reason: getErrorMessage(statusError),
+        stack: getErrorStack(statusError),
+      });
+    }
+  };
 
   try {
     const lock = await createNotificationLock(supabaseUrl, serviceRoleKey, idempotencyKey, emailType, recipientEmail, order);
 
     if (!lock.locked) {
+      console.log("[Email] Duplicate notification skipped", {
+        orderId: order.orderId,
+        emailType,
+        recipient: recipientEmail,
+        reason: cleanText((lock as Record<string, unknown>).reason),
+      });
       return {
         type: emailType,
         status: "duplicate",
@@ -571,27 +722,85 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
         reason: cleanText((lock as Record<string, unknown>).reason),
       };
     }
+  } catch (error) {
+    notificationLockAvailable = false;
+    console.error("[Email] Failure reason", {
+      orderId: order.orderId,
+      emailType,
+      recipient: recipientEmail,
+      stage: "notification_lock",
+      reason: getErrorMessage(error),
+      stack: getErrorStack(error),
+    });
+    console.warn("[Email] Continuing without notification lock; Resend idempotency still applies", {
+      orderId: order.orderId,
+      emailType,
+      recipient: recipientEmail,
+    });
+  }
 
+  try {
     const content = emailType === "admin"
       ? buildAdminEmailContent(order)
       : buildCustomerEmailContent(order);
+
+    if (emailType === "admin") {
+      console.log("[Email] Sending admin notification", {
+        orderId: order.orderId,
+        paymentId: order.paymentId,
+        to: recipientEmail,
+      });
+    } else {
+      console.log("[Email] Sending customer confirmation", {
+        orderId: order.orderId,
+        paymentId: order.paymentId,
+        to: recipientEmail,
+      });
+    }
+
     const resendResponse = await sendWithResend(content, recipientEmail, idempotencyKey, order, emailType);
     const sentAt = new Date().toISOString();
     const providerMessageId = cleanText(resendResponse.id);
 
-    await updateNotificationStatus(supabaseUrl, serviceRoleKey, idempotencyKey, {
-      status: "sent",
-      provider_message_id: providerMessageId,
-      error: null,
-      sent_at: sentAt,
-    });
+    if (notificationLockAvailable) {
+      try {
+        await updateNotificationStatus(supabaseUrl, serviceRoleKey, idempotencyKey, {
+          status: "sent",
+          provider_message_id: providerMessageId,
+          error: null,
+          sent_at: sentAt,
+        });
+      } catch (statusError) {
+        console.error("[Email] Failure reason", {
+          orderId: order.orderId,
+          emailType,
+          stage: "record_sent_status",
+          reason: getErrorMessage(statusError),
+          stack: getErrorStack(statusError),
+        });
+      }
+    }
 
     if (emailType === "customer") {
-      await markCustomerEmailSent(supabaseUrl, serviceRoleKey, order, sentAt);
-      console.log("[Email] Customer confirmation sent", { orderId: order.orderId, to: recipientEmail });
-    } else {
-      console.log("[Email] Admin email sent", { orderId: order.orderId, to: recipientEmail });
+      try {
+        await markCustomerEmailSent(supabaseUrl, serviceRoleKey, order, sentAt);
+      } catch (markError) {
+        console.error("[Email] Failure reason", {
+          orderId: order.orderId,
+          emailType,
+          stage: "mark_customer_email_sent",
+          reason: getErrorMessage(markError),
+          stack: getErrorStack(markError),
+        });
+      }
     }
+
+    console.log("[Email] Success", {
+      orderId: order.orderId,
+      emailType,
+      to: recipientEmail,
+      providerMessageId,
+    });
 
     return {
       type: emailType,
@@ -600,18 +809,18 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       providerMessageId,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
 
-    try {
-      await updateNotificationStatus(supabaseUrl, serviceRoleKey, idempotencyKey, {
-        status: "failed",
-        error: message.slice(0, 1000),
-      });
-    } catch (statusError) {
-      console.error("[Email] Failed to update failed email status", statusError);
-    }
+    await recordFailedStatus(message);
 
-    console.error(`[Email] ${emailType} email failed`, message);
+    console.error("[Email] Failure reason", {
+      orderId: order.orderId,
+      emailType,
+      recipient: recipientEmail,
+      stage: "send_email",
+      reason: message,
+      stack: getErrorStack(error),
+    });
     return {
       type: emailType,
       status: "failed",
@@ -622,15 +831,32 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
 }
 
 Deno.serve(async (req) => {
+  const requestId = crypto.randomUUID();
+
+  console.log("[Email] Function called", {
+    requestId,
+    method: req.method,
+    origin: req.headers.get("origin") || "",
+    contentType: req.headers.get("content-type") || "",
+    hasAuthorization: Boolean(req.headers.get("authorization")),
+  });
+
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
 
   if (req.method !== "POST") {
+    console.error("[Email] Failure reason", {
+      requestId,
+      reason: "method_not_allowed",
+      method: req.method,
+    });
     return jsonResponse({ ok: false, error: "method_not_allowed" }, 405);
   }
 
   try {
+    logRuntimeConfig(requestId);
+
     const supabaseUrl = getRequiredEnv("SUPABASE_URL").replace(/\/+$/, "");
     const serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     const body = await req.json();
@@ -641,17 +867,47 @@ Deno.serve(async (req) => {
     const orderId = cleanText(requestOrder.id);
     const paymentId = cleanText(requestPayment.id);
 
+    console.log("[Email] Payload received", {
+      requestId,
+      orderId,
+      paymentId,
+      itemCount: Array.isArray(requestOrder.items) ? requestOrder.items.length : 0,
+      customerEmail: cleanText((requestOrder.customer as Record<string, unknown> | undefined)?.email),
+      totalAmount: cleanNumber(requestOrder.total_amount),
+    });
+
     if (!orderId || !paymentId) {
+      console.error("[Email] Failure reason", {
+        requestId,
+        reason: "missing_order_or_payment_id",
+        orderId,
+        paymentId,
+      });
       return jsonResponse({ ok: false, error: "missing_order_or_payment_id" }, 400);
     }
 
     const savedOrder = await fetchSavedOrder(supabaseUrl, serviceRoleKey, orderId, paymentId);
 
     if (!savedOrder) {
+      console.error("[Email] Failure reason", {
+        requestId,
+        reason: "saved_order_not_found",
+        orderId,
+        paymentId,
+      });
       return jsonResponse({ ok: false, error: "saved_order_not_found" }, 404);
     }
 
     const order = normalizeOrder(savedOrder, requestOrder);
+    console.log("[Email] Saved order found", {
+      requestId,
+      orderId: order.orderId,
+      paymentId: order.paymentId,
+      customerEmail: order.customerEmail,
+      itemCount: order.items.length,
+      totalAmount: order.totalAmount,
+    });
+
     const emailResults = [
       await sendEmailJob(supabaseUrl, serviceRoleKey, order, "admin"),
       await sendEmailJob(supabaseUrl, serviceRoleKey, order, "customer"),
@@ -659,6 +915,15 @@ Deno.serve(async (req) => {
     const complete = emailResults.every((result) => result.status === "sent" || result.status === "duplicate");
     const adminEmailSent = emailResults.some((result) => result.type === "admin" && (result.status === "sent" || result.status === "duplicate"));
     const customerEmailSent = emailResults.some((result) => result.type === "customer" && (result.status === "sent" || result.status === "duplicate"));
+
+    console.log("[Email] Success", {
+      requestId,
+      orderId: order.orderId,
+      complete,
+      adminEmailSent,
+      customerEmailSent,
+      emails: emailResults,
+    });
 
     return jsonResponse({
       ok: true,
@@ -670,7 +935,13 @@ Deno.serve(async (req) => {
       emails: emailResults,
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = getErrorMessage(error);
+    console.error("[Email] Failure reason", {
+      requestId,
+      stage: "function",
+      reason: message,
+      stack: getErrorStack(error),
+    });
     console.error("[Email] send-order-notification failed", message);
     return jsonResponse({ ok: false, error: message }, 500);
   }

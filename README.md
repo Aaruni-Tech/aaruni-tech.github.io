@@ -27,6 +27,11 @@ const ENV = "development";
 
 Fill the DEV Supabase values, EmailJS testing IDs, and Razorpay live key ID before relying on those paths.
 
+Customer login and persistent order history use Supabase Auth plus `public.customer_profiles`
+and `public.orders.user_id`. Apply `docs/supabase-auth-order-history.sql` to the target
+Supabase project after deploying the matching frontend so checkout is protected by a real
+email/password session.
+
 Only public values are allowed in `aaruni-config.js`: Supabase URL, Supabase anon/publishable key, Razorpay key ID, and EmailJS public IDs. Never add Supabase service-role keys, Razorpay key secrets, Resend API keys, webhook secrets, or other private credentials to this GitHub Pages repo.
 
 ## How to Run Locally

@@ -9,6 +9,7 @@ const ORDER_EMAIL_FUNCTION_NAME =
     window.AARUNI_CONFIG.email.orderNotificationFunctionName) ||
   "send-order-notification";
 const ORDER_EMAIL_STORAGE_PREFIX = "aaruniOrderEmailNotification:";
+const CUSTOMER_PROFILE_TABLE = "customer_profiles";
 
 console.log("[Supabase] Backend init", {
   url: window.SUPABASE_URL,
@@ -48,9 +49,10 @@ function getClient() {
     try {
       supabaseClient = createClient(url, anonKey, {
         auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          flowType: "pkce",
         },
       });
     } catch (err) {
@@ -70,6 +72,319 @@ function getOrderEmailFunctionUrl() {
   }
 
   return `${url.replace(/\/+$/, "")}/functions/v1/${ORDER_EMAIL_FUNCTION_NAME}`;
+}
+
+function getAuthRedirectUrl(mode) {
+  const url = new URL("index.html", window.location.href);
+  url.searchParams.set("open_account", "1");
+  if (mode) {
+    url.searchParams.set("mode", mode);
+  }
+  return url.toString();
+}
+
+function getAddressFromParts(profile) {
+  return [
+    profile.houseNumber,
+    profile.village,
+    profile.mandal,
+    profile.area,
+    profile.district,
+    profile.state,
+  ].filter(Boolean).join(", ");
+}
+
+function getAddressPartsObject(profile) {
+  return {
+    state: String(profile.state || "").trim(),
+    area: String(profile.area || "").trim(),
+    district: String(profile.district || "").trim(),
+    mandal: String(profile.mandal || "").trim(),
+    village: String(profile.village || "").trim(),
+    houseNumber: String(profile.houseNumber || profile.house_number || "").trim(),
+  };
+}
+
+function normalizeCustomerProfile(input = {}, user = null) {
+  const metadata = (user && user.user_metadata) || {};
+  const addressParts = {
+    ...getAddressPartsObject(metadata),
+    ...getAddressPartsObject(input),
+  };
+  const address =
+    String(input.address || input.shipping_address || metadata.address || metadata.shipping_address || "").trim() ||
+    getAddressFromParts(addressParts);
+  const email = String(input.email || (user && user.email) || metadata.email || "").trim();
+  const fullName = String(input.full_name || input.fullName || input.name || metadata.full_name || metadata.name || "").trim();
+
+  return {
+    id: String(input.id || (user && user.id) || "").trim(),
+    full_name: fullName || (email ? email.split("@")[0] : "Customer"),
+    name: fullName || (email ? email.split("@")[0] : "Customer"),
+    email,
+    phone: String(input.phone || metadata.phone || "").trim(),
+    address,
+    shipping_address: address,
+    state: addressParts.state,
+    area: addressParts.area,
+    district: addressParts.district,
+    mandal: addressParts.mandal,
+    village: addressParts.village,
+    houseNumber: addressParts.houseNumber,
+    address_parts: addressParts,
+    created_at: input.created_at || "",
+  };
+}
+
+function customerProfileToPayload(profile, user) {
+  const normalized = normalizeCustomerProfile(profile, user);
+
+  return {
+    id: user.id,
+    full_name: normalized.full_name,
+    email: normalized.email || user.email || "",
+    phone: normalized.phone || null,
+    address: normalized.address || "",
+    address_parts: normalized.address_parts || {},
+  };
+}
+
+async function getAuthSession() {
+  if (!isConfigured()) {
+    return { ok: false, session: null, user: null, reason: "Supabase is not configured." };
+  }
+
+  const client = getClient();
+  const { data, error } = await client.auth.getSession();
+
+  if (error) {
+    return { ok: false, session: null, user: null, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true, session: data.session || null, user: data.session ? data.session.user : null };
+}
+
+async function fetchCustomerProfile(user) {
+  if (!user) {
+    return { ok: false, profile: null, reason: "Missing authenticated user." };
+  }
+
+  const client = getClient();
+  const { data, error } = await client
+    .from(CUSTOMER_PROFILE_TABLE)
+    .select("id, full_name, email, phone, address, address_parts, created_at")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[Auth] Customer profile lookup failed", toSupabaseErrorDetails(error));
+    return {
+      ok: false,
+      profile: normalizeCustomerProfile({}, user),
+      error: toSafeMessage(error),
+      details: toSupabaseErrorDetails(error),
+    };
+  }
+
+  return { ok: true, profile: normalizeCustomerProfile(data || {}, user) };
+}
+
+async function upsertCustomerProfile(profileInput = {}) {
+  const sessionResult = await getAuthSession();
+
+  if (!sessionResult.ok || !sessionResult.user) {
+    return { ok: false, error: sessionResult.error || "You must be logged in to save account details." };
+  }
+
+  const client = getClient();
+  const payload = customerProfileToPayload(profileInput, sessionResult.user);
+  const { data, error } = await client
+    .from(CUSTOMER_PROFILE_TABLE)
+    .upsert(payload, { onConflict: "id" })
+    .select("id, full_name, email, phone, address, address_parts, created_at")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true, profile: normalizeCustomerProfile(data || payload, sessionResult.user) };
+}
+
+async function getCurrentAccount() {
+  const sessionResult = await getAuthSession();
+
+  if (!sessionResult.ok || !sessionResult.user) {
+    return {
+      ok: sessionResult.ok,
+      session: sessionResult.session || null,
+      user: null,
+      profile: null,
+      error: sessionResult.error || "",
+      reason: sessionResult.reason || "not_authenticated",
+    };
+  }
+
+  const profileResult = await fetchCustomerProfile(sessionResult.user);
+
+  return {
+    ok: true,
+    session: sessionResult.session,
+    user: sessionResult.user,
+    profile: profileResult.profile || normalizeCustomerProfile({}, sessionResult.user),
+    profileStatus: profileResult.ok ? "loaded" : "fallback",
+    profileError: profileResult.error || "",
+  };
+}
+
+async function claimCustomerOrdersForCurrentUser() {
+  const sessionResult = await getAuthSession();
+
+  if (!sessionResult.ok || !sessionResult.user) {
+    return { ok: false, claimed: 0, reason: "not_authenticated" };
+  }
+
+  try {
+    const { data, error } = await getClient().rpc("claim_customer_orders_for_current_user");
+
+    if (error) {
+      console.info("[Auth] Order claim RPC unavailable or failed", toSupabaseErrorDetails(error));
+      return { ok: false, claimed: 0, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+    }
+
+    return { ok: true, claimed: Number(data || 0) };
+  } catch (error) {
+    return { ok: false, claimed: 0, error: toSafeMessage(error) };
+  }
+}
+
+async function signUpCustomer({ fullName, email, password, phone, address, addressParts }) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const profile = normalizeCustomerProfile({
+    full_name: fullName,
+    email,
+    phone,
+    address,
+    ...(addressParts || {}),
+  });
+
+  const { data, error } = await getClient().auth.signUp({
+    email: profile.email,
+    password,
+    options: {
+      emailRedirectTo: getAuthRedirectUrl("login"),
+      data: {
+        full_name: profile.full_name,
+        phone: profile.phone,
+        address: profile.address,
+      },
+    },
+  });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  if (data.session && data.user) {
+    const savedProfile = await upsertCustomerProfile(profile);
+    await claimCustomerOrdersForCurrentUser();
+
+    return {
+      ok: true,
+      session: data.session,
+      user: data.user,
+      profile: savedProfile.profile || profile,
+      requiresEmailConfirmation: false,
+    };
+  }
+
+  return {
+    ok: true,
+    session: data.session || null,
+    user: data.user || null,
+    profile,
+    requiresEmailConfirmation: true,
+  };
+}
+
+async function signInCustomer({ email, password }) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { data, error } = await getClient().auth.signInWithPassword({
+    email: String(email || "").trim(),
+    password,
+  });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  const account = await getCurrentAccount();
+  await claimCustomerOrdersForCurrentUser();
+
+  return {
+    ok: true,
+    session: data.session,
+    user: data.user,
+    profile: account.profile,
+  };
+}
+
+async function signOutCustomer() {
+  if (!isConfigured()) {
+    return { ok: true };
+  }
+
+  const { error } = await getClient().auth.signOut();
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true };
+}
+
+async function sendPasswordReset(email) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { error } = await getClient().auth.resetPasswordForEmail(String(email || "").trim(), {
+    redirectTo: getAuthRedirectUrl("reset"),
+  });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true };
+}
+
+async function updatePassword(password) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { data, error } = await getClient().auth.updateUser({ password });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true, user: data.user || null };
+}
+
+function onAuthStateChange(callback) {
+  if (!isConfigured()) {
+    return { data: { subscription: { unsubscribe() {} } } };
+  }
+
+  return getClient().auth.onAuthStateChange(callback);
 }
 
 function toSafeMessage(error) {
@@ -560,14 +875,27 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   }
 
   const client = getClient();
+  const account = await getCurrentAccount();
+
+  if (!account.user) {
+    return { ok: false, error: "Login is required before checkout.", code: "auth_required" };
+  }
 
   try {
-    const buyer = orderDraft.buyer || {};
+    const accountProfile = account.profile || {};
+    const buyer = {
+      ...(orderDraft.buyer || {}),
+      name: accountProfile.full_name || accountProfile.name || (orderDraft.buyer && orderDraft.buyer.name) || "Customer",
+      email: accountProfile.email || (orderDraft.buyer && orderDraft.buyer.email) || "",
+      phone: accountProfile.phone || (orderDraft.buyer && orderDraft.buyer.phone) || "",
+      address: accountProfile.address || (orderDraft.buyer && orderDraft.buyer.address) || "",
+    };
     const createdAtIso = orderDraft.createdAt || new Date().toISOString();
 
     console.info("[Supabase] saveOrderAfterPayment start", {
       paymentId,
       draftId: orderDraft.id,
+      userId: account.user.id,
       items: Array.isArray(orderDraft.items) ? orderDraft.items.length : 0,
       buyer: {
         name: buyer.name,
@@ -584,12 +912,14 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         table: "users",
         payloads: [
           {
+            id: account.user.id,
             full_name: buyer.name || "Customer",
             email: buyer.email || null,
             phone: buyer.phone || null,
             shipping_address: buyer.address || "",
           },
           {
+            id: account.user.id,
             name: buyer.name || "Customer",
             email: buyer.email || null,
             phone: buyer.phone || null,
@@ -621,13 +951,20 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           p_products: productsJson,
           p_shipping_address: buyer.address || "",
           p_total_amount: Number(orderDraft.totalAmount || 0),
+          p_user_id: account.user.id,
         };
 
         console.info("[Supabase] Calling RPC place_order_cart", {
           ...rpcPayload,
           p_products_json: JSON.stringify(productsJson),
         });
-        const rpcResponse = await client.rpc("place_order_cart", rpcPayload);
+        let rpcResponse = await client.rpc("place_order_cart", rpcPayload);
+
+        if (rpcResponse.error && isMissingFunctionError(toSupabaseErrorDetails(rpcResponse.error), "place_order_cart")) {
+          const { p_user_id: _userId, ...legacyRpcPayload } = rpcPayload;
+          console.warn("[Supabase] Retrying legacy place_order_cart RPC without p_user_id");
+          rpcResponse = await client.rpc("place_order_cart", legacyRpcPayload);
+        }
 
         const rpcOrder = normalizeRpcOrderPayload(rpcResponse.data);
         const rpcError = rpcResponse.error;
@@ -668,6 +1005,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
               provider: "supabase",
               schema: "orders_v2",
               orderRowId: rpcOrder.id,
+              userId: account.user.id,
             },
           };
 
@@ -717,8 +1055,10 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
         payment_status: paymentId ? "Paid" : "Pending",
         order_id: orderDraft.id,
+        user_id: account.user.id,
       };
       const liveSchemaPayload = {
+        user_id: basePayload.user_id,
         customer_name: basePayload.customer_name,
         customer_email: basePayload.customer_email,
         phone: basePayload.phone,
@@ -731,6 +1071,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         total_amount: Number(orderDraft.totalAmount || 0),
       };
       const liveSchemaMinimalPayload = {
+        user_id: basePayload.user_id,
         customer_name: basePayload.customer_name,
         customer_email: basePayload.customer_email,
         phone: basePayload.phone,
@@ -787,6 +1128,7 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
             provider: "supabase",
             schema: "orders_v2_no_stock",
             orderRowId: null,
+            userId: account.user.id,
           },
         };
 
@@ -870,6 +1212,52 @@ async function listOrdersForCustomer({ email, phone, limit = 20 }) {
   }
 }
 
+async function listOrdersForCurrentUser({ limit = 50 } = {}) {
+  if (!isConfigured()) {
+    return { ok: false, skipped: true, reason: "Supabase is not configured." };
+  }
+
+  const account = await getCurrentAccount();
+
+  if (!account.user) {
+    return { ok: false, error: "Login is required to view order history.", code: "auth_required" };
+  }
+
+  await claimCustomerOrdersForCurrentUser();
+
+  try {
+    const buildQuery = (selectColumns) => getClient()
+      .from("orders")
+      .select(selectColumns)
+      .eq("user_id", account.user.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(100, Math.max(1, Number(limit) || 50)));
+
+    let { data: orderRows, error: orderError } = await buildQuery(
+      "id, user_id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, total_amount, products, shipping_address, payment_status, order_status"
+    );
+
+    if (orderError && (orderError.code === "42703" || orderError.code === "PGRST204")) {
+      console.info("[Supabase] Retrying authenticated orders lookup with compact schema", toSupabaseErrorDetails(orderError));
+      const compactResult = await buildQuery(
+        "id, created_at, order_id, customer_name, customer_email, phone, products, total_amount, shipping_address, payment_status, order_status"
+      );
+      orderRows = compactResult.data;
+      orderError = compactResult.error;
+    }
+
+    if (orderError) {
+      return { ok: false, error: toSafeMessage(orderError), code: orderError.code || "orders_lookup_failed" };
+    }
+
+    const orders = (orderRows || []).map(orderFromFlatOrderRow);
+
+    return { ok: true, orders };
+  } catch (error) {
+    return { ok: false, error: toSafeMessage(error), code: "unexpected_error" };
+  }
+}
+
 async function fetchOrderByOrderId(orderId) {
   if (!isConfigured()) {
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
@@ -918,9 +1306,23 @@ async function fetchOrderByOrderId(orderId) {
 
 window.AaruniSupabaseBackend = {
   isConfigured,
+  getClient,
+  getAuthSession,
+  getCurrentAccount,
+  onAuthStateChange,
+  signUpCustomer,
+  signInCustomer,
+  signOutCustomer,
+  sendPasswordReset,
+  updatePassword,
+  upsertCustomerProfile,
+  claimCustomerOrdersForCurrentUser,
   saveOrderAfterPayment,
   sendOrderNotificationEmail,
   listOrdersForCustomer,
+  listOrdersForCurrentUser,
   fetchOrderByOrderId,
   ORDER_STATUSES,
 };
+
+window.dispatchEvent(new CustomEvent("aaruni:supabase-ready"));

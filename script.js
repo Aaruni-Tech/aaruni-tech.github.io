@@ -15,6 +15,10 @@ const searchInput = document.querySelector("#searchInput");
 const cartCount = document.querySelector("#cartCount");
 const cartButton = document.querySelector("#cartButton");
 const accountButton = document.querySelector("#accountButton");
+const accountButtonText = document.querySelector("#accountButtonText");
+const signupButton = document.querySelector("#signupButton");
+const logoutButton = document.querySelector("#logoutButton");
+const myOrdersButton = document.querySelector("#myOrdersButton");
 const toast = document.querySelector("#toast");
 const pageOverlay = document.querySelector("#pageOverlay");
 const cartDrawer = document.querySelector("#cartDrawer");
@@ -26,11 +30,25 @@ const clearCartButton = document.querySelector("#clearCartButton");
 const checkoutButton = document.querySelector("#checkoutButton");
 const accountModal = document.querySelector("#accountModal");
 const closeAccountButton = document.querySelector("#closeAccountButton");
+const accountModalTitle = document.querySelector("#accountModalTitle");
+const accountModalDescription = document.querySelector("#accountModalDescription");
+const accountMessage = document.querySelector("#accountMessage");
+const authTabs = document.querySelector("#authTabs");
+const accountLoginForm = document.querySelector("#accountLoginForm");
 const accountSignupForm = document.querySelector("#accountSignupForm");
+const forgotPasswordForm = document.querySelector("#forgotPasswordForm");
+const resetPasswordForm = document.querySelector("#resetPasswordForm");
+const accountProfileForm = document.querySelector("#accountProfileForm");
+const accountProfileName = document.querySelector("#accountProfileName");
+const accountProfileEmail = document.querySelector("#accountProfileEmail");
 
 let activeCategory = "All";
 let cartItems = loadCart();
 let toastTimer;
+let authReady = false;
+let currentAccount = { user: null, profile: null };
+let pendingCheckoutAfterAuth = false;
+let authSubscription = null;
 
 const FALLBACK_IMAGE_URL = "https://via.placeholder.com/400x400?text=No+Image";
 const BAD_HOSTS = ["localhost:7071", "localhost:37857"];
@@ -310,6 +328,211 @@ function loadSignupProfile() {
   }
 }
 
+function saveLocalSignupProfile(profile) {
+  try {
+    window.localStorage.setItem(SIGNUP_STORAGE_KEY, JSON.stringify(profile || {}));
+  } catch (error) {
+    return;
+  }
+}
+
+function getFormData(form) {
+  return Object.fromEntries(new FormData(form).entries());
+}
+
+function getAddressParts(data) {
+  return {
+    state: String(data.state || "").trim(),
+    area: String(data.area || "").trim(),
+    district: String(data.district || "").trim(),
+    mandal: String(data.mandal || "").trim(),
+    village: String(data.village || "").trim(),
+    houseNumber: String(data.houseNumber || data.house_number || "").trim(),
+  };
+}
+
+function normalizeProfileForCheckout(profile) {
+  const source = profile || {};
+  const addressParts = getAddressParts(source);
+  const address = String(source.address || source.shipping_address || getDeliveryAddress(addressParts)).trim();
+  const fullName = String(source.full_name || source.fullName || source.name || "").trim();
+
+  return {
+    name: fullName,
+    fullName,
+    email: String(source.email || "").trim(),
+    phone: String(source.phone || "").trim(),
+    address,
+    ...addressParts,
+  };
+}
+
+function fillFormFromProfile(form, profile) {
+  if (!form) return;
+  const normalized = normalizeProfileForCheckout(profile || loadSignupProfile());
+  const fields = {
+    fullName: normalized.fullName || normalized.name,
+    name: normalized.name,
+    email: normalized.email,
+    phone: normalized.phone,
+    state: normalized.state,
+    area: normalized.area,
+    district: normalized.district,
+    mandal: normalized.mandal,
+    village: normalized.village,
+    houseNumber: normalized.houseNumber,
+  };
+
+  Object.entries(fields).forEach(([name, value]) => {
+    const field = form.elements[name];
+    if (field && value && !field.value) {
+      field.value = value;
+    }
+  });
+}
+
+function setAccountMessage(message, type = "info") {
+  if (!accountMessage) return;
+
+  if (!message) {
+    accountMessage.hidden = true;
+    accountMessage.textContent = "";
+    accountMessage.dataset.type = "";
+    return;
+  }
+
+  accountMessage.hidden = false;
+  accountMessage.textContent = message;
+  accountMessage.dataset.type = type;
+}
+
+function setAuthLoading(form, isLoading) {
+  if (!form) return;
+  form.querySelectorAll("button, input, select").forEach((control) => {
+    control.disabled = Boolean(isLoading);
+  });
+}
+
+function setAuthMode(mode, message) {
+  const activeMode = mode || (currentAccount.user ? "profile" : "login");
+  const content = {
+    login: {
+      title: "Login",
+      description: "Sign in to continue checkout and view your saved orders.",
+    },
+    signup: {
+      title: "Create your account",
+      description: "Use email and password so your orders stay linked to you.",
+    },
+    forgot: {
+      title: "Reset password",
+      description: "Enter your account email and we will send a password reset link.",
+    },
+    reset: {
+      title: "Set new password",
+      description: "Choose a new password for your Aaruni Tech account.",
+    },
+    profile: {
+      title: "Your account",
+      description: "Manage saved delivery details and order history.",
+    },
+  };
+
+  document.querySelectorAll("[data-auth-panel]").forEach((panel) => {
+    panel.hidden = panel.dataset.authPanel !== activeMode;
+  });
+
+  if (authTabs) {
+    authTabs.hidden = currentAccount.user || activeMode === "forgot" || activeMode === "reset";
+    authTabs.querySelectorAll("[data-auth-mode]").forEach((button) => {
+      button.classList.toggle("active", button.dataset.authMode === activeMode);
+    });
+  }
+
+  if (accountModalTitle) accountModalTitle.textContent = (content[activeMode] || content.login).title;
+  if (accountModalDescription) accountModalDescription.textContent = (content[activeMode] || content.login).description;
+
+  if (message) {
+    setAccountMessage(message);
+  } else {
+    setAccountMessage("");
+  }
+}
+
+function updateAccountUi() {
+  const profile = normalizeProfileForCheckout(currentAccount.profile || {});
+  const loggedIn = Boolean(currentAccount.user);
+  const displayName = profile.name || (currentAccount.user && currentAccount.user.email) || "Account";
+
+  if (accountButtonText) {
+    accountButtonText.textContent = loggedIn ? displayName.split(" ")[0] : "Login";
+  }
+  if (signupButton) signupButton.hidden = loggedIn;
+  if (logoutButton) logoutButton.hidden = !loggedIn;
+  if (myOrdersButton) myOrdersButton.hidden = !loggedIn;
+
+  if (accountProfileName) accountProfileName.textContent = displayName;
+  if (accountProfileEmail) accountProfileEmail.textContent = profile.email || (currentAccount.user && currentAccount.user.email) || "";
+
+  if (loggedIn) {
+    fillFormFromProfile(accountProfileForm, {
+      ...loadSignupProfile(),
+      ...profile,
+    });
+  }
+}
+
+async function refreshAuthState() {
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.getCurrentAccount) {
+    authReady = false;
+    currentAccount = { user: null, profile: null };
+    updateAccountUi();
+    return currentAccount;
+  }
+
+  const account = await window.AaruniSupabaseBackend.getCurrentAccount();
+  currentAccount = {
+    user: account.user || null,
+    profile: account.profile || null,
+  };
+  authReady = true;
+  updateAccountUi();
+  return currentAccount;
+}
+
+function getCheckoutProfile() {
+  if (currentAccount.user && currentAccount.profile) {
+    return normalizeProfileForCheckout({
+      ...loadSignupProfile(),
+      ...currentAccount.profile,
+    });
+  }
+
+  return normalizeProfileForCheckout(loadSignupProfile());
+}
+
+async function requireCheckoutAccount() {
+  await refreshAuthState();
+
+  if (!currentAccount.user) {
+    pendingCheckoutAfterAuth = true;
+    showToast("Login or sign up before checkout.");
+    openAccountPanel("login");
+    return { ok: false, reason: "not_authenticated" };
+  }
+
+  const profile = getCheckoutProfile();
+
+  if (!isCheckoutProfileComplete(profile)) {
+    pendingCheckoutAfterAuth = true;
+    showToast("Complete your delivery details before checkout.");
+    openAccountPanel("profile");
+    return { ok: false, reason: "profile_incomplete" };
+  }
+
+  return { ok: true, profile };
+}
+
 function truncateNote(value) {
   return String(value || "").slice(0, 240);
 }
@@ -338,7 +561,7 @@ function getDeliveryAddress(profile) {
 }
 
 function isCheckoutProfileComplete(profile) {
-  return Boolean(profile.name && profile.email && profile.phone && getDeliveryAddress(profile));
+  return Boolean(profile.name && profile.email && profile.phone && (profile.address || getDeliveryAddress(profile)));
 }
 
 function getRazorpayConfigError() {
@@ -426,7 +649,7 @@ async function sendConfiguredOrderEmail(order) {
   return { ok: false, skipped: true, reason: "No order email provider configured." };
 }
 
-function startRazorpayCheckout() {
+async function startRazorpayCheckout() {
   const amount = getCartSubtotal();
 
   if (amount <= 0) {
@@ -445,13 +668,13 @@ function startRazorpayCheckout() {
     return;
   }
 
-  const signupProfile = loadSignupProfile();
+  const authCheck = await requireCheckoutAccount();
 
-  if (!isCheckoutProfileComplete(signupProfile)) {
-    showToast("Add your name, email, phone, and delivery address before checkout.");
-    openAccountPanel();
+  if (!authCheck.ok) {
     return;
   }
+
+  const signupProfile = authCheck.profile;
 
   console.info("[Checkout] Starting Razorpay checkout", {
     cartQty: getCartQuantity(),
@@ -641,10 +864,11 @@ function closeCart() {
   closeOverlayIfIdle();
 }
 
-function openAccountPanel() {
+function openAccountPanel(mode) {
   openOverlay();
   document.body.classList.add("modal-open");
   accountModal.hidden = false;
+  setAuthMode(mode || (currentAccount.user ? "profile" : "login"));
 }
 
 function closeAccountPanel() {
@@ -696,8 +920,33 @@ document.addEventListener("click", (event) => {
 });
 
 accountButton.addEventListener("click", () => {
-  openAccountPanel();
+  openAccountPanel(currentAccount.user ? "profile" : "login");
 });
+
+if (signupButton) {
+  signupButton.addEventListener("click", () => {
+    openAccountPanel("signup");
+  });
+}
+
+if (logoutButton) {
+  logoutButton.addEventListener("click", async () => {
+    if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.signOutCustomer) {
+      return;
+    }
+
+    const result = await window.AaruniSupabaseBackend.signOutCustomer();
+    if (!result.ok) {
+      showToast(result.error || "Logout failed.");
+      return;
+    }
+
+    currentAccount = { user: null, profile: null };
+    pendingCheckoutAfterAuth = false;
+    updateAccountUi();
+    showToast("Logged out.");
+  });
+}
 
 cartButton.addEventListener("click", () => {
   openCart();
@@ -719,37 +968,233 @@ clearCartButton.addEventListener("click", () => {
   showToast("Cart cleared.");
 });
 
-accountSignupForm.addEventListener("submit", (event) => {
+document.addEventListener("click", (event) => {
+  const authModeButton = event.target.closest("[data-auth-mode]");
+  if (!authModeButton) return;
+  setAuthMode(authModeButton.dataset.authMode);
+});
+
+async function continueCheckoutAfterAuth() {
+  await refreshAuthState();
+
+  if (pendingCheckoutAfterAuth && currentAccount.user) {
+    pendingCheckoutAfterAuth = false;
+    closeAccountPanel();
+    await startRazorpayCheckout();
+  }
+}
+
+accountLoginForm.addEventListener("submit", async (event) => {
   event.preventDefault();
 
-  const signupData = Object.fromEntries(new FormData(accountSignupForm).entries());
-
-  try {
-    window.localStorage.setItem(SIGNUP_STORAGE_KEY, JSON.stringify(signupData));
-  } catch (error) {
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.signInCustomer) {
+    setAccountMessage("Supabase Auth is not available. Please try again.", "error");
     return;
   }
 
-  showToast(`Thanks ${signupData.name}, your sign-up details were saved.`);
-  closeAccountPanel();
+  const loginData = getFormData(accountLoginForm);
+  setAuthLoading(accountLoginForm, true);
+  setAccountMessage("Logging in...");
+
+  try {
+    const result = await window.AaruniSupabaseBackend.signInCustomer(loginData);
+
+    if (!result.ok) {
+      setAccountMessage(result.error || "Login failed.", "error");
+      return;
+    }
+
+    await refreshAuthState();
+    fillFormFromProfile(accountProfileForm, currentAccount.profile);
+    setAuthMode("profile", "Logged in successfully.");
+    showToast("Logged in.");
+    await continueCheckoutAfterAuth();
+  } finally {
+    setAuthLoading(accountLoginForm, false);
+  }
+});
+
+accountSignupForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  const signupData = Object.fromEntries(new FormData(accountSignupForm).entries());
+  const profile = normalizeProfileForCheckout(signupData);
+  saveLocalSignupProfile(profile);
+
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.signUpCustomer) {
+    setAccountMessage("Supabase Auth is not available. Please try again.", "error");
+    return;
+  }
+
+  setAuthLoading(accountSignupForm, true);
+  setAccountMessage("Creating your account...");
+
+  try {
+    const result = await window.AaruniSupabaseBackend.signUpCustomer({
+      fullName: profile.fullName || profile.name,
+      email: profile.email,
+      password: signupData.password,
+      phone: profile.phone,
+      address: profile.address || getDeliveryAddress(profile),
+      addressParts: getAddressParts(profile),
+    });
+
+    if (!result.ok) {
+      setAccountMessage(result.error || "Sign up failed.", "error");
+      return;
+    }
+
+    if (result.requiresEmailConfirmation) {
+      showToast("Check your email to confirm your account.");
+      setAuthMode("login", "Account created. Check your email to confirm your login, then return to checkout.");
+      return;
+    }
+
+    await refreshAuthState();
+    fillFormFromProfile(accountProfileForm, currentAccount.profile || profile);
+    setAuthMode("profile", "Account created.");
+    showToast(`Welcome ${profile.name || "to Aaruni Tech"}.`);
+    await continueCheckoutAfterAuth();
+  } finally {
+    setAuthLoading(accountSignupForm, false);
+  }
+});
+
+forgotPasswordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.sendPasswordReset) {
+    setAccountMessage("Supabase Auth is not available. Please try again.", "error");
+    return;
+  }
+
+  const resetData = getFormData(forgotPasswordForm);
+  setAuthLoading(forgotPasswordForm, true);
+  setAccountMessage("Sending reset link...");
+
+  try {
+    const result = await window.AaruniSupabaseBackend.sendPasswordReset(resetData.email);
+
+    if (!result.ok) {
+      setAccountMessage(result.error || "Could not send reset link.", "error");
+      return;
+    }
+
+    setAccountMessage("Password reset link sent. Check your email.", "success");
+  } finally {
+    setAuthLoading(forgotPasswordForm, false);
+  }
+});
+
+resetPasswordForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.updatePassword) {
+    setAccountMessage("Supabase Auth is not available. Please try again.", "error");
+    return;
+  }
+
+  const resetData = getFormData(resetPasswordForm);
+  setAuthLoading(resetPasswordForm, true);
+  setAccountMessage("Updating password...");
+
+  try {
+    const result = await window.AaruniSupabaseBackend.updatePassword(resetData.password);
+
+    if (!result.ok) {
+      setAccountMessage(result.error || "Could not update password.", "error");
+      return;
+    }
+
+    setAuthMode("login", "Password updated. Please login with your new password.");
+  } finally {
+    setAuthLoading(resetPasswordForm, false);
+  }
+});
+
+accountProfileForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.upsertCustomerProfile) {
+    setAccountMessage("Supabase Auth is not available. Please try again.", "error");
+    return;
+  }
+
+  const profileData = getFormData(accountProfileForm);
+  const profile = normalizeProfileForCheckout({
+    ...profileData,
+    email: currentAccount.user && currentAccount.user.email,
+  });
+  saveLocalSignupProfile(profile);
+  setAuthLoading(accountProfileForm, true);
+  setAccountMessage("Saving account details...");
+
+  try {
+    const result = await window.AaruniSupabaseBackend.upsertCustomerProfile({
+      full_name: profile.fullName || profile.name,
+      email: profile.email,
+      phone: profile.phone,
+      address: profile.address || getDeliveryAddress(profile),
+      ...getAddressParts(profile),
+    });
+
+    if (!result.ok) {
+      setAccountMessage(result.error || "Could not save account details.", "error");
+      return;
+    }
+
+    await refreshAuthState();
+    setAuthMode("profile", "Account details saved.");
+    showToast("Account details saved.");
+    await continueCheckoutAfterAuth();
+  } finally {
+    setAuthLoading(accountProfileForm, false);
+  }
 });
 
 checkoutButton.addEventListener("click", startRazorpayCheckout);
+
+async function initializeAuthUi() {
+  fillFormFromProfile(accountSignupForm, loadSignupProfile());
+  fillFormFromProfile(accountProfileForm, loadSignupProfile());
+
+  if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.getCurrentAccount) {
+    updateAccountUi();
+    return;
+  }
+
+  await refreshAuthState();
+
+  if (!authSubscription && window.AaruniSupabaseBackend.onAuthStateChange) {
+    const result = window.AaruniSupabaseBackend.onAuthStateChange(async () => {
+      await refreshAuthState();
+    });
+    authSubscription = result && result.data ? result.data.subscription : null;
+  }
+}
+
+if (window.AaruniSupabaseBackend) {
+  initializeAuthUi();
+} else {
+  window.addEventListener("aaruni:supabase-ready", initializeAuthUi, { once: true });
+}
 
 try {
   const params = new URLSearchParams(window.location.search);
   const shouldOpenCart = params.get("open_cart") === "1";
   const shouldOpenAccount = params.get("open_account") === "1";
+  const accountMode = params.get("mode") || "";
 
   if (shouldOpenCart) {
     openCart();
   } else if (shouldOpenAccount) {
-    openAccountPanel();
+    openAccountPanel(accountMode || "login");
   }
 
   if (shouldOpenCart || shouldOpenAccount) {
     params.delete("open_cart");
     params.delete("open_account");
+    params.delete("mode");
     const cleaned = `${window.location.pathname}${params.toString() ? `?${params.toString()}` : ""}${window.location.hash || ""}`;
     window.history.replaceState({}, "", cleaned);
   }

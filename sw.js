@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.05.23.1";
+const APP_VERSION = "2026.05.23.2";
 const CACHE_NAME = `aaruni-tech-${APP_VERSION}`;
 
 const APP_SHELL = [

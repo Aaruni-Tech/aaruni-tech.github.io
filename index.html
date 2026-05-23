@@ -39,12 +39,39 @@
       </form>
 
       <div class="header-actions">
+        <a class="action-button" id="myOrdersButton" href="my-orders.html" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M7 7h10" />
+            <path d="M7 11h10" />
+            <path d="M7 15h6" />
+            <path d="M6 3h12a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z" />
+          </svg>
+          <span>My Orders</span>
+        </a>
+
         <button class="action-button" id="accountButton" type="button">
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 12a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" />
             <path d="M4 21a8 8 0 0 1 16 0" />
           </svg>
-          <span>Account</span>
+          <span id="accountButtonText">Login</span>
+        </button>
+
+        <button class="action-button" id="signupButton" type="button">
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 5v14" />
+            <path d="M5 12h14" />
+          </svg>
+          <span>Sign Up</span>
+        </button>
+
+        <button class="action-button" id="logoutButton" type="button" hidden>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M10 17 15 12 10 7" />
+            <path d="M15 12H3" />
+            <path d="M21 3v18" />
+          </svg>
+          <span>Logout</span>
         </button>
 
         <button class="cart-button" id="cartButton" type="button" aria-label="Cart with 0 items">
@@ -318,13 +345,37 @@
     <div class="modal-card">
       <button id="closeAccountButton" type="button" aria-label="Close account panel">×</button>
       <p class="section-kicker">Aaruni account</p>
-      <h2>Create your account</h2>
-      <p>Save your delivery details for faster orders and support.</p>
+      <h2 id="accountModalTitle">Login</h2>
+      <p id="accountModalDescription">Access checkout, saved delivery details, and order history.</p>
 
-      <form class="signup-form" id="accountSignupForm">
+      <div class="auth-message" id="accountMessage" hidden></div>
+
+      <div class="auth-tabs" id="authTabs" role="tablist" aria-label="Account actions">
+        <button class="active" type="button" data-auth-mode="login">Login</button>
+        <button type="button" data-auth-mode="signup">Sign Up</button>
+      </div>
+
+      <form class="auth-panel auth-form" id="accountLoginForm" data-auth-panel="login">
         <label>
-          <span>Name</span>
-          <input type="text" name="name" autocomplete="name" required />
+          <span>Email</span>
+          <input type="email" name="email" autocomplete="email" required />
+        </label>
+
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" minlength="6" required />
+        </label>
+
+        <div class="auth-form-row">
+          <button class="text-button" type="button" data-auth-mode="forgot">Forgot password?</button>
+          <button class="primary-button" type="submit">Login</button>
+        </div>
+      </form>
+
+      <form class="auth-panel signup-form" id="accountSignupForm" data-auth-panel="signup" hidden>
+        <label>
+          <span>Full Name</span>
+          <input type="text" name="fullName" autocomplete="name" required />
         </label>
 
         <label>
@@ -333,14 +384,21 @@
         </label>
 
         <label>
-          <span>Gender</span>
-          <select name="gender" required>
-            <option value="">Select gender</option>
-            <option value="Female">Female</option>
-            <option value="Male">Male</option>
-            <option value="Other">Other</option>
-            <option value="Prefer not to say">Prefer not to say</option>
-          </select>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="new-password" minlength="6" required />
+        </label>
+
+        <label>
+          <span>Phone No</span>
+          <input
+            type="tel"
+            name="phone"
+            inputmode="numeric"
+            autocomplete="tel"
+            pattern="[0-9]{10}"
+            placeholder="10 digit mobile number"
+            required
+          />
         </label>
 
         <label>
@@ -373,7 +431,48 @@
           <input type="text" name="houseNumber" autocomplete="address-line1" required />
         </label>
 
-        <label class="signup-field-wide">
+        <div class="signup-actions">
+          <button class="secondary-button" type="reset">Clear</button>
+          <button class="primary-button" type="submit">Create Account</button>
+        </div>
+      </form>
+
+      <form class="auth-panel auth-form" id="forgotPasswordForm" data-auth-panel="forgot" hidden>
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" autocomplete="email" required />
+        </label>
+
+        <div class="auth-form-row">
+          <button class="secondary-button" type="button" data-auth-mode="login">Back to Login</button>
+          <button class="primary-button" type="submit">Send Reset Link</button>
+        </div>
+      </form>
+
+      <form class="auth-panel auth-form" id="resetPasswordForm" data-auth-panel="reset" hidden>
+        <label>
+          <span>New Password</span>
+          <input type="password" name="password" autocomplete="new-password" minlength="6" required />
+        </label>
+
+        <div class="auth-form-row">
+          <button class="secondary-button" type="button" data-auth-mode="login">Back to Login</button>
+          <button class="primary-button" type="submit">Update Password</button>
+        </div>
+      </form>
+
+      <form class="auth-panel signup-form" id="accountProfileForm" data-auth-panel="profile" hidden>
+        <div class="account-summary signup-field-wide">
+          <strong id="accountProfileName">Customer</strong>
+          <span id="accountProfileEmail">Signed in</span>
+        </div>
+
+        <label>
+          <span>Full Name</span>
+          <input type="text" name="fullName" autocomplete="name" required />
+        </label>
+
+        <label>
           <span>Phone No</span>
           <input
             type="tel"
@@ -386,9 +485,39 @@
           />
         </label>
 
+        <label>
+          <span>State</span>
+          <input type="text" name="state" autocomplete="address-level1" required />
+        </label>
+
+        <label>
+          <span>Area</span>
+          <input type="text" name="area" autocomplete="address-line2" required />
+        </label>
+
+        <label>
+          <span>District</span>
+          <input type="text" name="district" autocomplete="address-level2" required />
+        </label>
+
+        <label>
+          <span>Mandal</span>
+          <input type="text" name="mandal" required />
+        </label>
+
+        <label>
+          <span>Village</span>
+          <input type="text" name="village" required />
+        </label>
+
+        <label>
+          <span>House Number</span>
+          <input type="text" name="houseNumber" autocomplete="address-line1" required />
+        </label>
+
         <div class="signup-actions">
-          <button class="secondary-button" type="reset">Clear</button>
-          <button class="primary-button" type="submit">Sign Up</button>
+          <a class="secondary-button" href="my-orders.html">My Orders</a>
+          <button class="primary-button" type="submit">Save Details</button>
         </div>
       </form>
     </div>
@@ -439,15 +568,15 @@
 
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-  <script src="aaruni-config.js?v=20260523-1"></script>
+  <script src="aaruni-config.js?v=20260523-2"></script>
   <script src="supabase-config.js?v=20260522-1"></script>
-  <script type="module" src="supabase-backend.js?v=20260523-1"></script>
+  <script type="module" src="supabase-backend.js?v=20260523-2"></script>
   <script src="emailjs-config.js?v=20260522-1"></script>
-  <script src="order.js?v=20260519-7"></script>
+  <script src="order.js?v=20260523-2"></script>
   <script src="email.js?v=20260522-1"></script>
-  <script src="script.js?v=20260523-1"></script>
+  <script src="script.js?v=20260523-2"></script>
   <script src="whatsapp.js?v=20260516-2"></script>
-  <script src="pwa.js?v=20260523-1"></script>
+  <script src="pwa.js?v=20260523-2"></script>
 </body>
 
 </html>

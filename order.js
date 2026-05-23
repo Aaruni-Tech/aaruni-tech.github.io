@@ -80,6 +80,11 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
   const shippingCharge = 0;
   const totalAmount = subtotal + shippingCharge;
   const addressParts = getAddressParts(buyerProfile || {});
+  const buyerAddress = addressParts.length
+    ? addressParts.join(", ")
+    : buyerProfile && buyerProfile.address
+      ? String(buyerProfile.address)
+      : "";
   const orderId = generateOrderId(createdAt);
 
   return {
@@ -99,7 +104,7 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
       name: buyerProfile && buyerProfile.name ? buyerProfile.name : "Customer",
       email: buyerProfile && buyerProfile.email ? buyerProfile.email : "",
       phone: buyerProfile && buyerProfile.phone ? buyerProfile.phone : "",
-      address: addressParts.join(", "),
+      address: buyerAddress,
       addressParts,
       state: buyerProfile && buyerProfile.state ? buyerProfile.state : "",
       district: buyerProfile && buyerProfile.district ? buyerProfile.district : "",

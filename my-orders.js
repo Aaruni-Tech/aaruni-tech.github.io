@@ -1,19 +1,3 @@
-const SIGNUP_STORAGE_KEY = "aaruniTechSignupProfile";
-
-function loadSignupProfile() {
-  try {
-    const parsedProfile = JSON.parse(window.localStorage.getItem(SIGNUP_STORAGE_KEY));
-
-    if (!parsedProfile || typeof parsedProfile !== "object") {
-      return {};
-    }
-
-    return parsedProfile;
-  } catch (error) {
-    return {};
-  }
-}
-
 function escapeHtml(value) {
   return String(value || "")
     .replace(/&/g, "&amp;")
@@ -23,44 +7,139 @@ function escapeHtml(value) {
     .replace(/'/g, "&#39;");
 }
 
-function renderEmpty(container, message) {
+function formatDate(value) {
+  const date = value ? new Date(value) : new Date();
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(Number.isNaN(date.getTime()) ? new Date() : date);
+}
+
+function formatMoney(value) {
+  if (window.AaruniOrders && window.AaruniOrders.formatOrderPrice) {
+    return window.AaruniOrders.formatOrderPrice(Number(value || 0));
+  }
+
+  return `Rs. ${Number(value || 0).toLocaleString("en-IN")}`;
+}
+
+function formatOrderSummary(order) {
+  const items = Array.isArray(order.items) ? order.items : [];
+  const primaryItems = items.slice(0, 2).map((item) => `${item.name} x ${item.quantity}`);
+  const remaining = items.length - primaryItems.length;
+  return remaining > 0 ? `${primaryItems.join(", ")} + ${remaining} more` : primaryItems.join(", ");
+}
+
+function getOrderQuantity(order) {
+  if (order.totalQuantity) {
+    return Number(order.totalQuantity);
+  }
+
+  return (Array.isArray(order.items) ? order.items : []).reduce((sum, item) => sum + Number(item.quantity || 0), 0);
+}
+
+function renderLoginPrompt(container, message) {
+  container.innerHTML = `
+    <article class="orders-auth-card">
+      <div>
+        <p class="section-kicker">Customer login</p>
+        <h2>Login to view your orders</h2>
+        <p>${escapeHtml(message || "Your order history is protected and linked to your Aaruni Tech account.")}</p>
+      </div>
+
+      <form class="orders-login-form" id="ordersLoginForm">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" autocomplete="email" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" minlength="6" required />
+        </label>
+        <button class="primary-button" type="submit">Login</button>
+      </form>
+
+      <div class="orders-auth-actions">
+        <a class="secondary-button" href="index.html?open_account=1&mode=signup">Create Account</a>
+        <a class="primary-link" href="index.html?open_account=1&mode=forgot">Forgot password?</a>
+      </div>
+    </article>
+  `;
+
+  const form = container.querySelector("#ordersLoginForm");
+  form.addEventListener("submit", async (event) => {
+    event.preventDefault();
+
+    if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.signInCustomer) {
+      renderError(container, "Supabase Auth is not available.");
+      return;
+    }
+
+    const loginData = Object.fromEntries(new FormData(form).entries());
+    form.querySelectorAll("button, input").forEach((control) => {
+      control.disabled = true;
+    });
+
+    const result = await window.AaruniSupabaseBackend.signInCustomer(loginData);
+
+    if (!result.ok) {
+      renderLoginPrompt(container, result.error || "Login failed.");
+      return;
+    }
+
+    renderMyOrders("myOrdersPage");
+  });
+}
+
+function renderEmpty(container) {
   container.innerHTML = `
     <article class="info-card">
-      <h2>${escapeHtml(message || "No orders yet")}</h2>
-      <p>Shop products and complete checkout to see your orders here.</p>
+      <h2>No orders yet</h2>
+      <p>Complete checkout while logged in and every order will appear here whenever you return.</p>
       <a class="primary-link tracking-action" href="index.html#products">Shop Products</a>
     </article>
   `;
 }
 
-function formatOrderSummary(order) {
-  const items = Array.isArray(order.items) ? order.items : [];
-  const primaryItems = items.slice(0, 2).map((item) => `${item.name} × ${item.quantity}`);
-  const remaining = items.length - primaryItems.length;
-  return remaining > 0 ? `${primaryItems.join(", ")} + ${remaining} more` : primaryItems.join(", ");
+function renderError(container, message) {
+  container.innerHTML = `
+    <article class="info-card">
+      <h2>Could not load orders</h2>
+      <p>${escapeHtml(message || "Please try again or contact support.")}</p>
+      <a class="primary-link tracking-action" href="contact-us.html">Contact Support</a>
+    </article>
+  `;
 }
 
 function renderOrderCard(order) {
   const steps = window.AaruniOrders && window.AaruniOrders.getTrackingSteps ? window.AaruniOrders.getTrackingSteps(order) : [];
-  const statusBadge = escapeHtml(order.status || "Order Confirmed");
   const orderId = escapeHtml(order.id || "");
+  const paymentStatus = (order.payment && order.payment.status) || order.payment_status || "Paid";
+  const deliveryStatus = order.status || "Order Confirmed";
+  const quantity = getOrderQuantity(order);
 
   return `
     <article class="order-card" data-order-card="${orderId}">
       <div class="order-card-top">
         <div class="order-card-meta">
           <strong>${orderId}</strong>
-          <span>${escapeHtml(order.orderDate || "")}</span>
+          <span>${escapeHtml(order.orderDate || formatDate(order.createdAt))}</span>
         </div>
-        <span class="order-status-badge">${statusBadge}</span>
+        <span class="order-status-badge">${escapeHtml(deliveryStatus)}</span>
       </div>
 
-      <p class="order-card-items">${escapeHtml(formatOrderSummary(order) || "Items are loading")}</p>
+      <div class="order-facts" aria-label="Order summary">
+        <div><span>Products</span><strong>${escapeHtml(formatOrderSummary(order) || "Items unavailable")}</strong></div>
+        <div><span>Quantity</span><strong>${escapeHtml(quantity)}</strong></div>
+        <div><span>Amount</span><strong>${formatMoney(order.totalAmount)}</strong></div>
+        <div><span>Payment</span><strong>${escapeHtml(paymentStatus)}</strong></div>
+      </div>
 
       <div class="order-card-bottom">
         <div class="order-card-total">
-          <span>Total</span>
-          <strong>${window.AaruniOrders.formatOrderPrice(order.totalAmount)}</strong>
+          <span>Delivery Status</span>
+          <strong>${escapeHtml(deliveryStatus)}</strong>
         </div>
 
         <div class="order-card-actions">
@@ -72,14 +151,14 @@ function renderOrderCard(order) {
       <div class="order-details" data-order-details="${orderId}" hidden>
         <div class="order-details-grid">
           <div class="order-details-block">
-            <p class="order-details-label">Delivery</p>
+            <p class="order-details-label">Delivery Address</p>
             <p class="order-details-value">${escapeHtml(order.buyer && order.buyer.address ? order.buyer.address : "Not available")}</p>
             <p class="order-details-sub">Phone: ${escapeHtml(order.buyer && order.buyer.phone ? order.buyer.phone : "not provided")}</p>
           </div>
           <div class="order-details-block">
-            <p class="order-details-label">Payment</p>
+            <p class="order-details-label">Payment ID</p>
             <p class="order-details-value">${escapeHtml(order.payment && order.payment.id ? order.payment.id : "not available")}</p>
-            <p class="order-details-sub">Subtotal: ${window.AaruniOrders.formatOrderPrice(order.subtotal)}</p>
+            <p class="order-details-sub">Status: ${escapeHtml(paymentStatus)}</p>
           </div>
         </div>
 
@@ -105,8 +184,8 @@ function renderOrderCard(order) {
             .map(
               (item) => `
               <div class="order-item-row">
-                <span>${escapeHtml(item.name)} × ${escapeHtml(item.quantity)}</span>
-                <strong>${window.AaruniOrders.formatOrderPrice(item.lineTotal)}</strong>
+                <span>${escapeHtml(item.name)} x ${escapeHtml(item.quantity)}</span>
+                <strong>${formatMoney(item.lineTotal)}</strong>
               </div>
             `
             )
@@ -122,34 +201,11 @@ function renderOrderCard(order) {
   `;
 }
 
-async function loadOrders() {
-  const signupProfile = loadSignupProfile();
-  const email = signupProfile.email ? String(signupProfile.email).trim() : "";
-  const phone = signupProfile.phone ? String(signupProfile.phone).trim() : "";
-
-  const hasLookupInfo = Boolean(email || phone);
-
-  if (
-    hasLookupInfo &&
-    window.AaruniSupabaseBackend &&
-    window.AaruniSupabaseBackend.isConfigured &&
-    window.AaruniSupabaseBackend.isConfigured() &&
-    window.AaruniSupabaseBackend.listOrdersForCustomer
-  ) {
-    const result = await window.AaruniSupabaseBackend.listOrdersForCustomer({ email, phone, limit: 20 });
-
-    if (result && result.ok) {
-      return result.orders || [];
-    }
-  }
-
-  return window.AaruniOrders && window.AaruniOrders.loadOrders ? window.AaruniOrders.loadOrders() : [];
-}
-
 function attachInteractions(container, ordersById) {
   container.addEventListener("click", (event) => {
     const toggleButton = event.target.closest("[data-order-toggle]");
     const invoiceButton = event.target.closest("[data-order-invoice]");
+    const logoutButton = event.target.closest("[data-orders-logout]");
 
     if (toggleButton) {
       const orderId = toggleButton.dataset.orderToggle;
@@ -169,6 +225,20 @@ function attachInteractions(container, ordersById) {
         window.AaruniOrders.downloadInvoice(order);
       }
     }
+
+    if (logoutButton && window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.signOutCustomer) {
+      window.AaruniSupabaseBackend.signOutCustomer().then(() => renderMyOrders("myOrdersPage"));
+    }
+  });
+}
+
+async function waitForBackend() {
+  if (window.AaruniSupabaseBackend) {
+    return;
+  }
+
+  await new Promise((resolve) => {
+    window.addEventListener("aaruni:supabase-ready", resolve, { once: true });
   });
 }
 
@@ -179,33 +249,54 @@ async function renderMyOrders(containerId) {
     return;
   }
 
-  container.innerHTML = `<article class="info-card"><h2>Loading your orders…</h2><p>Please wait.</p></article>`;
+  container.innerHTML = `<article class="info-card"><h2>Loading your orders</h2><p>Please wait.</p></article>`;
 
   try {
-    const orders = await loadOrders();
+    await waitForBackend();
 
-    if (!orders.length) {
-      const profile = loadSignupProfile();
-      if (!profile.email && !profile.phone) {
-        container.innerHTML = `
-          <article class="info-card">
-            <h2>Add your details to view orders</h2>
-            <p>Open the Account panel on the homepage and save your email and phone number.</p>
-            <a class="primary-link tracking-action" href="index.html">Go to Home</a>
-          </article>
-        `;
-        return;
-      }
-
-      renderEmpty(container, "No orders found");
+    if (!window.AaruniSupabaseBackend || !window.AaruniSupabaseBackend.getCurrentAccount) {
+      renderError(container, "Supabase is not configured.");
       return;
     }
 
+    const account = await window.AaruniSupabaseBackend.getCurrentAccount();
+
+    if (!account.user) {
+      renderLoginPrompt(container);
+      return;
+    }
+
+    const result = await window.AaruniSupabaseBackend.listOrdersForCurrentUser({ limit: 50 });
+
+    if (!result.ok) {
+      if (result.code === "auth_required") {
+        renderLoginPrompt(container);
+        return;
+      }
+
+      renderError(container, result.error || "Order history is unavailable.");
+      return;
+    }
+
+    const orders = result.orders || [];
+
+    if (!orders.length) {
+      renderEmpty(container);
+      return;
+    }
+
+    const profile = account.profile || {};
     const ordersById = new Map(orders.map((order) => [order.id, order]));
     container.innerHTML = `
       <div class="orders-header-row">
-        <p>Showing ${orders.length} recent order${orders.length === 1 ? "" : "s"}.</p>
-        <a class="secondary-button" href="index.html#products">Continue Shopping</a>
+        <div>
+          <p class="orders-customer">Signed in as <strong>${escapeHtml(profile.full_name || profile.name || account.user.email)}</strong></p>
+          <p>Showing ${orders.length} order${orders.length === 1 ? "" : "s"} linked to ${escapeHtml(account.user.email)}.</p>
+        </div>
+        <div class="orders-header-actions">
+          <a class="secondary-button" href="index.html#products">Continue Shopping</a>
+          <button class="secondary-button" type="button" data-orders-logout>Logout</button>
+        </div>
       </div>
       <div class="orders-grid">
         ${orders.map((order) => renderOrderCard(order)).join("")}
@@ -215,16 +306,10 @@ async function renderMyOrders(containerId) {
     attachInteractions(container, ordersById);
   } catch (error) {
     console.warn("My Orders render failed.", error);
-    container.innerHTML = `
-      <article class="info-card">
-        <h2>Couldn’t load orders</h2>
-        <p>Please try again or contact support at <a href="mailto:tech.aaruni@gmail.com">tech.aaruni@gmail.com</a>.</p>
-      </article>
-    `;
+    renderError(container, error && error.message ? error.message : "Unexpected error.");
   }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   renderMyOrders("myOrdersPage");
 });
-

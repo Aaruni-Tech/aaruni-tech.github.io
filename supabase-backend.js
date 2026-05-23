@@ -62,6 +62,16 @@ function getClient() {
   return supabaseClient;
 }
 
+function getOrderEmailFunctionUrl() {
+  const { url } = getSupabaseConfig();
+
+  if (!url || !ORDER_EMAIL_FUNCTION_NAME) {
+    return "";
+  }
+
+  return `${url.replace(/\/+$/, "")}/functions/v1/${ORDER_EMAIL_FUNCTION_NAME}`;
+}
+
 function toSafeMessage(error) {
   if (!error) {
     return "Unexpected error.";
@@ -423,6 +433,25 @@ function buildOrderNotificationPayload(order) {
   };
 }
 
+function summarizeOrderNotificationPayload(payload) {
+  const order = payload && payload.order ? payload.order : {};
+  const customer = order.customer || {};
+  const payment = order.payment || {};
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  return {
+    orderId: order.id || "",
+    paymentId: payment.id || "",
+    paymentStatus: payment.status || "",
+    customerEmail: customer.email || "",
+    customerPhonePresent: Boolean(customer.phone),
+    shippingAddressPresent: Boolean(customer.shipping_address),
+    itemCount: items.length,
+    totalQuantity: order.total_quantity || 0,
+    totalAmount: order.total_amount || 0,
+  };
+}
+
 async function sendOrderNotificationEmail(order) {
   if (!isConfigured()) {
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
@@ -447,11 +476,14 @@ async function sendOrderNotificationEmail(order) {
 
   const client = getClient();
   const payload = buildOrderNotificationPayload(order);
+  const functionUrl = getOrderEmailFunctionUrl();
 
   console.info("[OrderEmail] Invoking send-order-notification", {
     orderId,
     paymentId,
     functionName: ORDER_EMAIL_FUNCTION_NAME,
+    functionUrl,
+    payload: summarizeOrderNotificationPayload(payload),
   });
 
   try {
@@ -462,6 +494,15 @@ async function sendOrderNotificationEmail(order) {
     if (error) {
       const status = error && error.context && error.context.status ? Number(error.context.status) : 0;
       const details = toSupabaseErrorDetails(error);
+
+      console.error("[OrderEmail] send-order-notification returned error", {
+        orderId,
+        paymentId,
+        functionName: ORDER_EMAIL_FUNCTION_NAME,
+        functionUrl,
+        status,
+        details,
+      });
 
       if (status === 404) {
         return {
@@ -475,12 +516,27 @@ async function sendOrderNotificationEmail(order) {
       return { ok: false, error: toSafeMessage(error), details };
     }
 
+    console.info("[OrderEmail] send-order-notification response", {
+      orderId,
+      paymentId,
+      functionName: ORDER_EMAIL_FUNCTION_NAME,
+      data,
+    });
+
     if (data && (data.ok || data.duplicate) && data.complete !== false) {
       storeOrderEmailNotification(notificationKey);
     }
 
     return data || { ok: false, error: "Empty email function response." };
   } catch (error) {
+    console.error("[OrderEmail] send-order-notification threw", {
+      orderId,
+      paymentId,
+      functionName: ORDER_EMAIL_FUNCTION_NAME,
+      functionUrl,
+      error: toSafeMessage(error),
+      details: toSupabaseErrorDetails(error),
+    });
     return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
   }
 }

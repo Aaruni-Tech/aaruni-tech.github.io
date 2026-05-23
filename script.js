@@ -362,24 +362,13 @@ function getRazorpayConfigError() {
 async function sendConfiguredOrderEmail(order) {
   const provider = String(AARUNI_EMAIL_ENV_CONFIG.provider || "").trim();
 
-  if (provider === "emailjs") {
-    if (window.AaruniEmail && window.AaruniEmail.sendOrderEmails) {
-      console.info("[OrderEmail] Sending development EmailJS order email", {
+  const sendSupabaseOrderEmail = async (reason) => {
+    if (window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.sendOrderNotificationEmail) {
+      console.info("[OrderEmail] Sending Supabase order notification", {
         orderId: order.id,
         mode: AARUNI_APP_CONFIG.mode || "unknown",
+        reason: reason || "configured_provider",
       });
-      const emailResult = await window.AaruniEmail.sendOrderEmails(order);
-      console.info("[OrderEmail] EmailJS result", emailResult);
-      return emailResult;
-    }
-
-    console.warn("[OrderEmail] EmailJS provider selected but helper is unavailable.");
-    return { ok: false, skipped: true, reason: "EmailJS helper is unavailable." };
-  }
-
-  if (provider === "supabase-edge-function") {
-    if (window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.sendOrderNotificationEmail) {
-      console.info("[OrderEmail] Sending production order notification", { orderId: order.id });
       const emailResult = await window.AaruniSupabaseBackend.sendOrderNotificationEmail(order);
       console.info("[OrderEmail] sendOrderNotificationEmail result", emailResult);
 
@@ -403,6 +392,31 @@ async function sendConfiguredOrderEmail(order) {
 
     console.warn("[OrderEmail] Supabase notification helper is unavailable.");
     return { ok: false, skipped: true, reason: "Supabase notification helper is unavailable." };
+  };
+
+  if (provider === "emailjs") {
+    if (window.AaruniEmail && window.AaruniEmail.sendOrderEmails) {
+      console.info("[OrderEmail] Sending development EmailJS order email", {
+        orderId: order.id,
+        mode: AARUNI_APP_CONFIG.mode || "unknown",
+      });
+      const emailResult = await window.AaruniEmail.sendOrderEmails(order);
+      console.info("[OrderEmail] EmailJS result", emailResult);
+
+      if (emailResult && emailResult.skipped && window.AaruniSupabaseBackend && window.AaruniSupabaseBackend.sendOrderNotificationEmail) {
+        console.warn("[OrderEmail] EmailJS skipped; falling back to Supabase Edge Function", emailResult);
+        return sendSupabaseOrderEmail("emailjs_skipped");
+      }
+
+      return emailResult;
+    }
+
+    console.warn("[OrderEmail] EmailJS provider selected but helper is unavailable.");
+    return sendSupabaseOrderEmail("emailjs_helper_unavailable");
+  }
+
+  if (provider === "supabase-edge-function") {
+    return sendSupabaseOrderEmail("configured_provider");
   }
 
   console.info("[OrderEmail] No order email provider configured", {

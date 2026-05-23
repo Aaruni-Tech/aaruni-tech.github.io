@@ -161,14 +161,15 @@
         supportEmail: SUPPORT_EMAIL,
       },
       email: {
-        // Development uses EmailJS testing templates instead of real order emails.
+        // Development prefers EmailJS testing templates. If those placeholders
+        // are not configured, checkout falls back to the Supabase Edge Function.
         provider: "emailjs",
         publicKey: "YOUR_EMAILJS_PUBLIC_KEY",
         serviceId: "YOUR_EMAILJS_SERVICE_ID",
         buyerTemplateId: "YOUR_EMAILJS_TESTING_TEMPLATE_ID",
         sellerTemplateId: "YOUR_EMAILJS_TESTING_TEMPLATE_ID",
         sellerEmail: SUPPORT_EMAIL,
-        orderNotificationFunctionName: "",
+        orderNotificationFunctionName: "send-order-notification",
       },
       products: DEVELOPMENT_PRODUCTS,
     },

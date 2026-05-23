@@ -22,7 +22,7 @@ Switch modes with the single toggle near the top of that file:
 const ENV = "development";
 ```
 
-- `development`: Supabase DEV config, Razorpay test key, test products, and EmailJS testing templates.
+- `development`: Supabase DEV config, Razorpay test key, test products, and EmailJS testing templates with Supabase Edge Function fallback when EmailJS is not configured.
 - `production`: Supabase PROD config, Razorpay live key ID, production products, and real order emails through the Supabase Edge Function.
 
 Fill the DEV Supabase values, EmailJS testing IDs, and Razorpay live key ID before relying on those paths.

@@ -40,6 +40,7 @@ create table if not exists public.orders (
 );
 
 alter table public.orders add column if not exists order_id text;
+alter table public.orders add column if not exists user_id uuid;
 alter table public.orders add column if not exists customer_id uuid;
 alter table public.orders add column if not exists customer_name text;
 alter table public.orders add column if not exists customer_email text;
@@ -58,10 +59,23 @@ alter table public.orders add column if not exists currency text;
 alter table public.orders add column if not exists order_at timestamptz;
 alter table public.orders add column if not exists cart_items jsonb not null default '[]'::jsonb;
 alter table public.orders add column if not exists products jsonb not null default '[]'::jsonb;
+alter table public.orders add column if not exists db_saved boolean not null default true;
+alter table public.orders add column if not exists admin_email_sent boolean not null default false;
+alter table public.orders add column if not exists admin_email_sent_at timestamptz;
 alter table public.orders add column if not exists customer_email_sent boolean not null default false;
 alter table public.orders add column if not exists customer_email_sent_at timestamptz;
+update public.orders set db_saved = true where db_saved is null;
+update public.orders set admin_email_sent = false where admin_email_sent is null;
+update public.orders set customer_email_sent = false where customer_email_sent is null;
+alter table public.orders alter column db_saved set default true;
+alter table public.orders alter column admin_email_sent set default false;
+alter table public.orders alter column customer_email_sent set default false;
+alter table public.orders alter column db_saved set not null;
+alter table public.orders alter column admin_email_sent set not null;
+alter table public.orders alter column customer_email_sent set not null;
 
 create unique index if not exists idx_orders_order_id_unique on public.orders(order_id) where order_id is not null;
+create index if not exists idx_orders_user_id_created_at on public.orders(user_id, created_at desc);
 
 create table if not exists public.order_email_notifications (
   id uuid primary key default gen_random_uuid(),
@@ -86,6 +100,23 @@ create index if not exists idx_order_email_notifications_order_id on public.orde
 create index if not exists idx_order_email_notifications_payment_id on public.order_email_notifications(payment_id);
 create index if not exists idx_order_email_notifications_status on public.order_email_notifications(status);
 create index if not exists idx_order_email_notifications_email_type on public.order_email_notifications(email_type);
+
+create table if not exists public.checkout_debug_logs (
+  id uuid primary key default gen_random_uuid(),
+  step text not null,
+  payload jsonb,
+  error jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table public.checkout_debug_logs add column if not exists step text;
+alter table public.checkout_debug_logs add column if not exists payload jsonb;
+alter table public.checkout_debug_logs add column if not exists error jsonb;
+alter table public.checkout_debug_logs add column if not exists created_at timestamptz not null default now();
+update public.checkout_debug_logs set step = 'unknown' where step is null or trim(step) = '';
+alter table public.checkout_debug_logs alter column step set not null;
+create index if not exists idx_checkout_debug_logs_created_at on public.checkout_debug_logs(created_at desc);
+create index if not exists idx_checkout_debug_logs_step on public.checkout_debug_logs(step);
 
 -- 4) products table (needed for stock reduction RPC)
 create table if not exists public.products (
@@ -128,7 +159,8 @@ create or replace function public.place_order_cart(
   p_phone text,
   p_products jsonb,
   p_shipping_address text,
-  p_total_amount numeric
+  p_total_amount numeric,
+  p_user_id uuid default null
 )
 returns public.orders
 language plpgsql
@@ -229,6 +261,7 @@ begin
   insert into public.orders (
     created_at,
     order_at,
+    user_id,
     customer_name,
     customer_email,
     phone,
@@ -245,11 +278,15 @@ begin
     order_status,
     status,
     currency,
-    order_id
+    order_id,
+    db_saved,
+    admin_email_sent,
+    customer_email_sent
   )
   values (
     now(),
     now(),
+    p_user_id,
     trim(p_customer_name),
     nullif(trim(coalesce(p_customer_email, '')), ''),
     nullif(trim(coalesce(p_phone, '')), ''),
@@ -266,7 +303,10 @@ begin
     'Order Confirmed',
     'Order Confirmed',
     'INR',
-    coalesce(nullif(trim(p_order_id), ''), 'AT-' || to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)))
+    coalesce(nullif(trim(p_order_id), ''), 'AT-' || to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))),
+    true,
+    false,
+    false
   )
   returning * into v_order;
 
@@ -274,9 +314,9 @@ begin
 end;
 $$;
 
-revoke all on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric) from public;
-grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric) to anon;
-grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric) to authenticated;
+revoke all on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) from public;
+grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) to anon;
+grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) to authenticated;
 
 -- 6) RLS (enable + allow inserts needed by frontend)
 alter table public.users enable row level security;
@@ -284,8 +324,11 @@ alter table public.customers enable row level security;
 alter table public.orders enable row level security;
 alter table public.products enable row level security;
 alter table public.order_email_notifications enable row level security;
+alter table public.checkout_debug_logs enable row level security;
 
 revoke all on public.order_email_notifications from anon, authenticated;
+grant insert on public.checkout_debug_logs to anon, authenticated;
+revoke select, update, delete on public.checkout_debug_logs from anon, authenticated;
 
 drop policy if exists "public_insert_users" on public.users;
 create policy "public_insert_users" on public.users for insert to anon with check (true);
@@ -301,6 +344,11 @@ drop policy if exists "public_insert_orders" on public.orders;
 create policy "public_insert_orders" on public.orders for insert to anon with check (true);
 drop policy if exists "auth_insert_orders" on public.orders;
 create policy "auth_insert_orders" on public.orders for insert to authenticated with check (true);
+
+drop policy if exists "public_insert_checkout_debug_logs" on public.checkout_debug_logs;
+create policy "public_insert_checkout_debug_logs" on public.checkout_debug_logs for insert to anon with check (true);
+drop policy if exists "auth_insert_checkout_debug_logs" on public.checkout_debug_logs;
+create policy "auth_insert_checkout_debug_logs" on public.checkout_debug_logs for insert to authenticated with check (true);
 
 -- Allow reading products for storefront; block product writes except via RPC.
 drop policy if exists "public_read_products" on public.products;

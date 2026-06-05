@@ -15,10 +15,15 @@
   <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
   <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
   <link rel="shortcut icon" href="/favicon.ico">
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="styles.css?v=20260605-1" />
 </head>
 
 <body>
+  <div class="test-mode-banner" id="testModeBanner" role="status">
+    <strong>TEST MODE</strong>
+    <span>Razorpay test payments only. Real customer payments are not active.</span>
+  </div>
+
   <div class="announcement-bar">
     <p>
       <span aria-hidden="true">🎁</span>
@@ -39,6 +44,8 @@
       </form>
 
       <div class="header-actions">
+        <span class="environment-badge" id="environmentModeBadge" data-mode="test">TEST MODE</span>
+
         <a class="action-button" id="myOrdersButton" href="my-orders.html" hidden>
           <svg viewBox="0 0 24 24" aria-hidden="true">
             <path d="M7 7h10" />
@@ -264,11 +271,11 @@
       <div class="deal-inner">
         <div>
           <p class="section-kicker">Deal of the day</p>
-          <h2>Aaruni Power Bank Pro</h2>
-          <p>A compact 20,000mAh backup for travel, office, college and everyday use.</p>
+          <h2 id="dealProductName">Aaruni Power Bank Pro</h2>
+          <p id="dealProductDescription">A compact 20,000mAh backup for travel, office, college and everyday use.</p>
 
           <div class="deal-meta">
-            <span class="deal-price">Rs. 1,799</span>
+            <span class="deal-price" id="dealProductPrice">Rs. 1,799</span>
             <span class="deal-tag">Save 28%</span>
           </div>
 
@@ -330,10 +337,23 @@
 
     <div class="cart-items" id="cartItems"></div>
 
+    <div class="cart-fees">
+      <div>
+        <span>Shipping</span>
+        <strong id="cartShippingFee">Rs. 0</strong>
+      </div>
+      <div>
+        <span>GST</span>
+        <strong id="cartGstAmount">Rs. 0</strong>
+      </div>
+    </div>
+
     <div class="cart-total">
-      <span>Subtotal</span>
+      <span>Total</span>
       <strong id="cartSubtotal">Rs. 0</strong>
     </div>
+
+    <div class="checkout-mode-note" id="checkoutModeNote" hidden>TEST MODE checkout</div>
 
     <div class="drawer-actions">
       <button class="secondary-button" id="clearCartButton" type="button">Clear</button>
@@ -568,15 +588,15 @@
 
   <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-  <script src="aaruni-config.js?v=20260523-2"></script>
-  <script src="supabase-config.js?v=20260522-1"></script>
-  <script type="module" src="supabase-backend.js?v=20260523-2"></script>
+  <script src="aaruni-config.js?v=20260605-1"></script>
+  <script src="supabase-config.js?v=20260605-1"></script>
+  <script type="module" src="supabase-backend.js?v=20260605-1"></script>
   <script src="emailjs-config.js?v=20260522-1"></script>
-  <script src="order.js?v=20260523-2"></script>
+  <script src="order.js?v=20260605-1"></script>
   <script src="email.js?v=20260522-1"></script>
-  <script src="script.js?v=20260523-2"></script>
+  <script src="script.js?v=20260605-1"></script>
   <script src="whatsapp.js?v=20260516-2"></script>
-  <script src="pwa.js?v=20260523-2"></script>
+  <script src="pwa.js?v=20260605-1"></script>
 </body>
 
 </html>

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en-IN">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Aaruni Tech secure admin dashboard" />
+  <title>Admin | Aaruni Tech</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png">
+  <link rel="shortcut icon" href="/favicon.ico">
+  <link rel="stylesheet" href="../styles.css?v=20260605-1" />
+  <link rel="stylesheet" href="admin.css?v=20260605-1" />
+</head>
+
+<body class="admin-body">
+  <div class="admin-toast" id="adminToast" role="status" aria-live="polite"></div>
+
+  <main class="admin-auth" id="adminAuthView">
+    <section class="admin-auth-card">
+      <a href="../index.html" class="brand" aria-label="Aaruni Tech home">
+        <span class="brand-crop" aria-hidden="true"></span>
+        <span class="sr-only">Aaruni Tech</span>
+      </a>
+      <div>
+        <p class="admin-kicker">Secure Admin</p>
+        <h1>Admin Panel</h1>
+        <p>Sign in with the owner account to manage orders, customers, payments, email logs, and storefront settings.</p>
+      </div>
+      <form class="admin-login-form" id="adminLoginForm">
+        <label>
+          <span>Email</span>
+          <input type="email" name="email" autocomplete="email" value="tech.aaruni@gmail.com" required />
+        </label>
+        <label>
+          <span>Password</span>
+          <input type="password" name="password" autocomplete="current-password" required />
+        </label>
+        <button class="admin-primary" type="submit">Login</button>
+      </form>
+      <p class="admin-error" id="adminLoginMessage" hidden></p>
+    </section>
+  </main>
+
+  <div class="admin-shell" id="adminShell" hidden>
+    <aside class="admin-sidebar">
+      <a href="../index.html" class="brand" aria-label="Aaruni Tech home">
+        <span class="brand-crop" aria-hidden="true"></span>
+        <span class="sr-only">Aaruni Tech</span>
+      </a>
+      <nav class="admin-nav" aria-label="Admin navigation">
+        <button type="button" data-section="dashboard" class="active">Dashboard</button>
+        <button type="button" data-section="orders">Orders</button>
+        <button type="button" data-section="customers">Customers</button>
+        <button type="button" data-section="products">Products</button>
+        <button type="button" data-section="payments">Payments</button>
+        <button type="button" data-section="emailLogs">Email Logs</button>
+        <button type="button" data-section="settings">Settings</button>
+      </nav>
+    </aside>
+
+    <section class="admin-main">
+      <header class="admin-topbar">
+        <div>
+          <p class="admin-kicker">Aaruni Tech</p>
+          <h1 id="adminPageTitle">Dashboard</h1>
+        </div>
+        <div class="admin-topbar-actions">
+          <span class="environment-badge" id="adminModeBadge" data-mode="test">TEST MODE</span>
+          <button class="admin-secondary" id="refreshAdminButton" type="button">Refresh</button>
+          <button class="admin-secondary" id="adminLogoutButton" type="button">Logout</button>
+        </div>
+      </header>
+
+      <div class="admin-loading" id="adminLoading" hidden>
+        <span></span>
+        Loading
+      </div>
+
+      <section class="admin-section" id="section-dashboard"></section>
+      <section class="admin-section" id="section-orders" hidden></section>
+      <section class="admin-section" id="section-customers" hidden></section>
+      <section class="admin-section" id="section-products" hidden></section>
+      <section class="admin-section" id="section-payments" hidden></section>
+      <section class="admin-section" id="section-emailLogs" hidden></section>
+      <section class="admin-section" id="section-settings" hidden></section>
+    </section>
+  </div>
+
+  <div class="admin-modal" id="orderModal" hidden>
+    <div class="admin-modal-card">
+      <button type="button" id="closeOrderModal" aria-label="Close order details">×</button>
+      <div id="orderModalContent"></div>
+    </div>
+  </div>
+
+  <script src="../aaruni-config.js?v=20260605-1"></script>
+  <script src="../supabase-config.js?v=20260605-1"></script>
+  <script type="module" src="admin.js?v=20260605-1"></script>
+</body>
+
+</html>

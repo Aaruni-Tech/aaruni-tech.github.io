@@ -1,7 +1,14 @@
 const AARUNI_ORDER_STORAGE_KEY = "aaruniTechOrders";
 const AARUNI_LAST_ORDER_KEY = "aaruniTechLastOrderId";
-const AARUNI_ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
-const LEGACY_STATUS_MAP = new Map([["Confirmed", "Order Confirmed"]]);
+const AARUNI_ORDER_STATUSES = ["Processing", "Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered", "Cancelled"];
+const LEGACY_STATUS_MAP = new Map([
+  ["Confirmed", "Order Confirmed"],
+  ["pending", "Processing"],
+  ["processing", "Processing"],
+  ["shipped", "Shipped"],
+  ["delivered", "Delivered"],
+  ["cancelled", "Cancelled"],
+]);
 
 function formatOrderPrice(amount) {
   return `Rs. ${Number(amount || 0).toLocaleString("en-IN")}`;
@@ -73,12 +80,27 @@ function buildOrderItems(cartItems, products) {
     .filter(Boolean);
 }
 
+function getCommerceSettings() {
+  const appConfig = window.AARUNI_CONFIG || {};
+  const settings = appConfig.settings || {};
+  const gst = settings.gst || {};
+
+  return {
+    shippingFee: Math.max(0, Number(settings.shippingFee || settings.shipping_fee || 0)),
+    gstEnabled: Boolean(gst.enabled || settings.gstEnabled || settings.gst_enabled),
+    gstPercent: Math.max(0, Number(gst.percent || settings.gstPercent || settings.gst_percent || 0)),
+  };
+}
+
 function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmail }) {
   const createdAt = new Date();
+  const appConfig = window.AARUNI_CONFIG || {};
   const items = buildOrderItems(cartItems, products);
   const subtotal = items.reduce((total, item) => total + item.lineTotal, 0);
-  const shippingCharge = 0;
-  const totalAmount = subtotal + shippingCharge;
+  const commerceSettings = getCommerceSettings();
+  const shippingCharge = subtotal > 0 ? commerceSettings.shippingFee : 0;
+  const gstAmount = commerceSettings.gstEnabled ? Math.round((subtotal * commerceSettings.gstPercent) / 100) : 0;
+  const totalAmount = subtotal + shippingCharge + gstAmount;
   const addressParts = getAddressParts(buyerProfile || {});
   const buyerAddress = addressParts.length
     ? addressParts.join(", ")
@@ -99,7 +121,16 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
       provider: "Razorpay",
       id: paymentId || "not available",
       status: paymentId ? "Paid" : "Pending verification",
+      mode: appConfig.isProduction ? "live" : "test",
     },
+    environment: {
+      mode: appConfig.isProduction ? "production" : "test",
+      label: appConfig.label || "",
+      isTest: !appConfig.isProduction,
+    },
+    db_saved: false,
+    admin_email_sent: false,
+    customer_email_sent: false,
     buyer: {
       name: buyerProfile && buyerProfile.name ? buyerProfile.name : "Customer",
       email: buyerProfile && buyerProfile.email ? buyerProfile.email : "",
@@ -113,6 +144,13 @@ function createOrder({ cartItems, products, buyerProfile, paymentId, supportEmai
     totalQuantity: items.reduce((total, item) => total + item.quantity, 0),
     subtotal,
     shippingCharge,
+    shippingFee: shippingCharge,
+    gst: {
+      enabled: commerceSettings.gstEnabled,
+      percent: commerceSettings.gstPercent,
+      amount: gstAmount,
+    },
+    gstAmount,
     totalAmount,
     supportEmail: supportEmail || "tech.aaruni@gmail.com",
     trackingUrl: `${window.location.origin}${window.location.pathname.replace(/index\.html$/, "")}track-order.html?order_id=${encodeURIComponent(orderId)}`,

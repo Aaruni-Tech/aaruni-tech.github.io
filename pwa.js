@@ -1,9 +1,40 @@
-const AARUNI_APP_VERSION = "2026.05.23.2";
+const AARUNI_APP_VERSION = "2026.06.05.1";
 const VERSION_STORAGE_KEY = "aaruniTechAppVersion";
 
 let deferredInstallPrompt = null;
 let pendingServiceWorker = null;
 let reloadingForUpdate = false;
+
+function syncTestModeBanner() {
+  const config = window.AARUNI_CONFIG || {};
+
+  if (!config.mode) {
+    return;
+  }
+
+  let banner = document.querySelector("#testModeBanner");
+
+  if (config.isProduction) {
+    if (banner) {
+      banner.hidden = true;
+    }
+    return;
+  }
+
+  if (!banner) {
+    banner = document.createElement("div");
+    banner.className = "test-mode-banner";
+    banner.id = "testModeBanner";
+    banner.setAttribute("role", "status");
+    banner.innerHTML = `
+      <strong>TEST MODE</strong>
+      <span>Razorpay test payments only. Real customer payments are not active.</span>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
+
+  banner.hidden = false;
+}
 
 function isAppInstalled() {
   return window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone === true;
@@ -202,6 +233,7 @@ window.addEventListener("appinstalled", () => {
 });
 
 document.addEventListener("DOMContentLoaded", () => {
+  syncTestModeBanner();
   registerServiceWorker();
   checkVersion();
 

@@ -36,7 +36,38 @@ on public.customer_profiles (lower(email));
 create index if not exists idx_customer_profiles_created_at
 on public.customer_profiles(created_at desc);
 
+create table if not exists public.checkout_debug_logs (
+  id uuid primary key default gen_random_uuid(),
+  step text not null,
+  payload jsonb,
+  error jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table public.checkout_debug_logs add column if not exists step text;
+alter table public.checkout_debug_logs add column if not exists payload jsonb;
+alter table public.checkout_debug_logs add column if not exists error jsonb;
+alter table public.checkout_debug_logs add column if not exists created_at timestamptz not null default now();
+update public.checkout_debug_logs set step = 'unknown' where step is null or trim(step) = '';
+alter table public.checkout_debug_logs alter column step set not null;
+create index if not exists idx_checkout_debug_logs_created_at on public.checkout_debug_logs(created_at desc);
+create index if not exists idx_checkout_debug_logs_step on public.checkout_debug_logs(step);
+
 alter table public.orders add column if not exists user_id uuid;
+alter table public.orders add column if not exists db_saved boolean not null default true;
+alter table public.orders add column if not exists admin_email_sent boolean not null default false;
+alter table public.orders add column if not exists admin_email_sent_at timestamptz;
+alter table public.orders add column if not exists customer_email_sent boolean not null default false;
+alter table public.orders add column if not exists customer_email_sent_at timestamptz;
+update public.orders set db_saved = true where db_saved is null;
+update public.orders set admin_email_sent = false where admin_email_sent is null;
+update public.orders set customer_email_sent = false where customer_email_sent is null;
+alter table public.orders alter column db_saved set default true;
+alter table public.orders alter column admin_email_sent set default false;
+alter table public.orders alter column customer_email_sent set default false;
+alter table public.orders alter column db_saved set not null;
+alter table public.orders alter column admin_email_sent set not null;
+alter table public.orders alter column customer_email_sent set not null;
 
 do $$
 begin
@@ -311,7 +342,10 @@ begin
     order_status,
     status,
     currency,
-    order_id
+    order_id,
+    db_saved,
+    admin_email_sent,
+    customer_email_sent
   )
   values (
     now(),
@@ -333,7 +367,10 @@ begin
     'Order Confirmed',
     'Order Confirmed',
     'INR',
-    coalesce(nullif(trim(p_order_id), ''), 'AT-' || to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)))
+    coalesce(nullif(trim(p_order_id), ''), 'AT-' || to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))),
+    true,
+    false,
+    false
   )
   returning * into v_order;
 
@@ -345,9 +382,11 @@ grant usage on schema public to anon, authenticated;
 grant select on public.products to anon, authenticated;
 grant select, insert, update on public.customer_profiles to authenticated;
 grant select, insert on public.orders to authenticated;
+grant insert on public.checkout_debug_logs to anon, authenticated;
 
 revoke insert, update, delete on public.orders from anon;
 revoke all on public.customer_profiles from anon;
+revoke select, update, delete on public.checkout_debug_logs from anon, authenticated;
 
 revoke all on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) from public;
 grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) to authenticated;
@@ -358,6 +397,7 @@ grant execute on function public.claim_customer_orders_for_current_user() to aut
 alter table public.customer_profiles enable row level security;
 alter table public.orders enable row level security;
 alter table public.products enable row level security;
+alter table public.checkout_debug_logs enable row level security;
 
 drop policy if exists "customer_profiles_select_own" on public.customer_profiles;
 create policy "customer_profiles_select_own"
@@ -387,6 +427,11 @@ using (user_id = auth.uid());
 create policy "customers_insert_own_orders"
 on public.orders for insert to authenticated
 with check (user_id = auth.uid());
+
+drop policy if exists "public_insert_checkout_debug_logs" on public.checkout_debug_logs;
+create policy "public_insert_checkout_debug_logs" on public.checkout_debug_logs for insert to anon with check (true);
+drop policy if exists "auth_insert_checkout_debug_logs" on public.checkout_debug_logs;
+create policy "auth_insert_checkout_debug_logs" on public.checkout_debug_logs for insert to authenticated with check (true);
 
 drop policy if exists "public_read_products" on public.products;
 create policy "public_read_products" on public.products for select to anon using (true);

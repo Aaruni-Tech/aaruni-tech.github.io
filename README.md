@@ -14,18 +14,20 @@ Production admin order emails are sent through the Supabase Edge Function in `su
 
 ## Environment Switching
 
-All browser-safe environment settings live in `aaruni-config.js`.
+The browser-safe fallback mode lives in `aaruni-config.js`, but the runtime source of truth is now `public.app_settings.environment_mode` in Supabase. Admins can switch it at `/admin`:
 
-Switch modes with the single toggle near the top of that file:
+- `test`: uses the Razorpay test key ID, shows TEST MODE badges, and saves checkout rows into `public.test_orders`.
+- `production`: uses the Razorpay live key ID, shows LIVE MODE badges, and keeps the existing production `public.orders` flow.
 
-```js
-const ENV = "development";
-```
+Apply `docs/supabase-admin-environment.sql`, then deploy:
 
-- `development`: Supabase DEV config, Razorpay test key, test products, and EmailJS testing templates with Supabase Edge Function fallback when EmailJS is not configured.
-- `production`: Supabase PROD config, Razorpay live key ID, production products, and real order emails through the Supabase Edge Function.
+- `supabase/functions/public-config`
+- `supabase/functions/admin-api`
+- `supabase/functions/send-order-notification`
 
-Fill the DEV Supabase values, EmailJS testing IDs, and Razorpay live key ID before relying on those paths.
+The public `public-config` Edge Function returns only sanitized settings. Razorpay key secrets, Resend API keys, and Supabase service-role keys must stay in Supabase/Edge Function secrets, never in frontend files.
+
+The `/admin` dashboard is protected by Supabase Auth and the hard allowlist `tech.aaruni@gmail.com`. Admin data is read and written through `admin-api` with the service role key; the frontend never reads protected tables directly.
 
 Customer login and persistent order history use Supabase Auth plus `public.customer_profiles`
 and `public.orders.user_id`. Apply `docs/supabase-auth-order-history.sql` to the target
@@ -59,7 +61,11 @@ For the repository `aaruni-tech.github.io`, GitHub Pages can serve this site dir
 - `supabase-backend.js`
 - `email.js`
 - `order.js`
+- `environment-badge.js`
 - `my-orders.js`
+- `admin/index.html`
+- `admin/admin.css`
+- `admin/admin.js`
 - `styles.css`
 - `script.js`
 - `pwa.js`

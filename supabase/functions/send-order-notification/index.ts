@@ -8,6 +8,8 @@ const ADMIN_RECIPIENT_EMAIL = Deno.env.get("ORDER_NOTIFICATION_TO_EMAIL") || "te
 const SUPPORT_EMAIL = "tech.aaruni@gmail.com";
 const RESEND_API_URL = "https://api.resend.com/emails";
 const SENDING_STALE_AFTER_MS = 10 * 60 * 1000;
+const RESEND_MAX_ATTEMPTS = 3;
+const RESEND_RETRY_DELAY_MS = 1200;
 
 type EmailType = "admin" | "customer";
 
@@ -21,6 +23,8 @@ type OrderItem = {
 type NormalizedOrder = {
   orderId: string;
   paymentId: string;
+  environmentMode: "test" | "production";
+  sourceTable: "orders" | "test_orders";
   customerName: string;
   customerEmail: string;
   customerPhone: string;
@@ -35,6 +39,11 @@ type EmailContent = {
   subject: string;
   text: string;
   html: string;
+};
+
+type RuntimeEmailSettings = {
+  resendFromEmail?: string;
+  notificationEmail?: string;
 };
 
 type EmailResult = {
@@ -68,6 +77,18 @@ function getRequiredEnv(name: string) {
 
 function cleanText(value: unknown, fallback = "") {
   return String(value || fallback).trim();
+}
+
+function normalizeEnvironmentMode(value: unknown): "test" | "production" {
+  const raw = cleanText(value).toLowerCase();
+  if (raw === "prod" || raw === "live" || raw === "production") {
+    return "production";
+  }
+  return "test";
+}
+
+function getSourceTableForMode(mode: "test" | "production"): "orders" | "test_orders" {
+  return mode === "test" ? "test_orders" : "orders";
 }
 
 function cleanNumber(value: unknown, fallback = 0) {
@@ -116,6 +137,14 @@ function getErrorStack(error: unknown) {
   return error instanceof Error ? error.stack || "" : "";
 }
 
+function delay(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function shouldRetryResend(status: number) {
+  return status === 408 || status === 409 || status === 425 || status === 429 || status >= 500;
+}
+
 function extractEmailAddress(value: string) {
   const raw = cleanText(value).toLowerCase();
   const bracketMatch = raw.match(/<([^>]+)>/);
@@ -155,9 +184,10 @@ function summarizeResendResponse(text: string) {
   return text ? text.slice(0, 1000) : "";
 }
 
-function getEmailRuntimeConfig() {
+function getEmailRuntimeConfig(settings: RuntimeEmailSettings = {}) {
   const resendApiKey = Deno.env.get("RESEND_API_KEY") || "";
-  const fromEmail = Deno.env.get("RESEND_FROM_EMAIL") || "";
+  const fromEmail = cleanText(settings.resendFromEmail || Deno.env.get("RESEND_FROM_EMAIL"));
+  const adminRecipientEmail = cleanText(settings.notificationEmail || ADMIN_RECIPIENT_EMAIL);
 
   if (!resendApiKey) {
     throw new Error("Missing required environment variable: RESEND_API_KEY");
@@ -170,10 +200,44 @@ function getEmailRuntimeConfig() {
   return {
     resendApiKey,
     fromEmail,
-    adminRecipientEmail: ADMIN_RECIPIENT_EMAIL,
+    adminRecipientEmail,
     orderRecipientEnvPresent: Boolean(Deno.env.get("ORDER_NOTIFICATION_TO_EMAIL")),
     usingResendTestingSender: isResendTestingSender(fromEmail),
   };
+}
+
+async function fetchRuntimeEmailSettings(supabaseUrl: string, serviceRoleKey: string): Promise<RuntimeEmailSettings> {
+  if (!supabaseUrl || !serviceRoleKey) {
+    return {};
+  }
+
+  const url = new URL(`${supabaseUrl}/rest/v1/app_settings`);
+  url.searchParams.set("select", "resend_from_email,notification_email");
+  url.searchParams.set("id", "eq.global");
+  url.searchParams.set("limit", "1");
+
+  try {
+    const response = await fetch(url, { headers: getServiceHeaders(serviceRoleKey) });
+    const text = await response.text();
+
+    if (!response.ok) {
+      console.warn("[Email] app_settings email config unavailable", {
+        status: response.status,
+        body: text.slice(0, 500),
+      });
+      return {};
+    }
+
+    const rows = text ? JSON.parse(text) : [];
+    const row = Array.isArray(rows) && rows[0] ? rows[0] as Record<string, unknown> : {};
+    return {
+      resendFromEmail: cleanText(row.resend_from_email),
+      notificationEmail: cleanText(row.notification_email),
+    };
+  } catch (error) {
+    console.warn("[Email] app_settings email config lookup failed", getErrorMessage(error));
+    return {};
+  }
 }
 
 function logRuntimeConfig(requestId: string) {
@@ -251,6 +315,10 @@ function normalizeOrder(row: Record<string, unknown>, requestOrder: Record<strin
   const payment = requestOrder.payment && typeof requestOrder.payment === "object"
     ? requestOrder.payment as Record<string, unknown>
     : {};
+  const requestEnvironment = requestOrder.environment && typeof requestOrder.environment === "object"
+    ? requestOrder.environment as Record<string, unknown>
+    : {};
+  const environmentMode = normalizeEnvironmentMode(row.environment_mode || requestEnvironment.mode || requestOrder.environment_mode || "production");
   const totalAmount = cleanNumber(
     row.total_amount,
     cleanNumber(row.total_price, cleanNumber(requestOrder.total_amount, 0)),
@@ -264,6 +332,8 @@ function normalizeOrder(row: Record<string, unknown>, requestOrder: Record<strin
   return {
     orderId: cleanText(row.order_id || requestOrder.id),
     paymentId: cleanText(row.payment_id || payment.id),
+    environmentMode,
+    sourceTable: getSourceTableForMode(environmentMode),
     customerName: cleanText(row.customer_name || customer.name, "Customer"),
     customerEmail: cleanText(row.customer_email || customer.email, "not provided"),
     customerPhone: cleanText(row.phone || customer.phone, "not provided"),
@@ -296,8 +366,10 @@ function buildProductRows(order: NormalizedOrder) {
 
 function buildAdminEmailContent(order: NormalizedOrder): EmailContent {
   const productLines = buildProductTextLines(order);
-  const subject = `New Order on Aaruni Tech - ${order.orderId}`;
+  const testPrefix = order.environmentMode === "test" ? "[TEST ORDER] " : "";
+  const subject = `${testPrefix}New Order on Aaruni Tech - ${order.orderId}`;
   const text = [
+    ...(order.environmentMode === "test" ? ["TEST ORDER - do not fulfill as a live customer order.", ""] : []),
     `Customer Name: ${order.customerName}`,
     `Customer Email: ${order.customerEmail}`,
     `Customer Phone: ${order.customerPhone}`,
@@ -322,7 +394,7 @@ function buildAdminEmailContent(order: NormalizedOrder): EmailContent {
       <div style="max-width:720px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
         <div style="background:#0b2a3d;color:#ffffff;padding:22px 24px;">
           <h1 style="margin:0;font-size:22px;">Aaruni Tech</h1>
-          <p style="margin:8px 0 0;color:#f3f4f6;">New paid order received</p>
+          <p style="margin:8px 0 0;color:#f3f4f6;">${order.environmentMode === "test" ? "TEST ORDER - not a live fulfillment" : "New paid order received"}</p>
         </div>
         <div style="padding:24px;">
           <p><strong>Order ID:</strong> ${escapeHtml(order.orderId)}</p>
@@ -357,10 +429,12 @@ function buildAdminEmailContent(order: NormalizedOrder): EmailContent {
 
 function buildCustomerEmailContent(order: NormalizedOrder): EmailContent {
   const productLines = buildProductTextLines(order);
-  const subject = "Your Aaruni Tech Order is Confirmed";
+  const testPrefix = order.environmentMode === "test" ? "[TEST ORDER] " : "";
+  const subject = `${testPrefix}Your Aaruni Tech Order is Confirmed`;
   const text = [
     `Hello ${order.customerName},`,
     "",
+    ...(order.environmentMode === "test" ? ["TEST ORDER - this confirmation was generated in test mode.", ""] : []),
     "Thank you for shopping with Aaruni Tech.",
     "Your order has been confirmed successfully.",
     "",
@@ -385,7 +459,7 @@ function buildCustomerEmailContent(order: NormalizedOrder): EmailContent {
       <div style="max-width:680px;margin:0 auto;background:#ffffff;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;">
         <div style="background:#0b2a3d;color:#ffffff;padding:24px;">
           <h1 style="margin:0;font-size:24px;">Aaruni Tech</h1>
-          <p style="margin:8px 0 0;color:#f3f4f6;">Smart shopping, better living</p>
+          <p style="margin:8px 0 0;color:#f3f4f6;">${order.environmentMode === "test" ? "TEST ORDER" : "Smart shopping, better living"}</p>
         </div>
         <div style="padding:26px 24px;">
           <h2 style="margin:0 0 12px;font-size:22px;color:#111827;">Your order is confirmed</h2>
@@ -433,26 +507,117 @@ function getServiceHeaders(serviceRoleKey: string) {
   };
 }
 
+function toJsonSafe(value: unknown) {
+  if (value === undefined) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (_error) {
+    return { value: String(value) };
+  }
+}
+
+function toDebugError(error: unknown) {
+  if (!error) {
+    return null;
+  }
+
+  if (typeof error === "string") {
+    return { message: error };
+  }
+
+  const entry = error && typeof error === "object" ? error as Record<string, unknown> : {};
+
+  return {
+    status: cleanText(entry.status),
+    statusText: cleanText(entry.statusText),
+    code: cleanText(entry.code),
+    message: getErrorMessage(error),
+    details: cleanText(entry.details),
+    hint: cleanText(entry.hint),
+  };
+}
+
+async function logCheckoutDebug(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  step: string,
+  payload: Record<string, unknown>,
+  error: unknown,
+) {
+  if (!supabaseUrl || !serviceRoleKey) {
+    return;
+  }
+
+  const body = {
+    step: cleanText(step, "unknown").slice(0, 200),
+    payload: toJsonSafe(payload) || {},
+    error: toDebugError(error) || toJsonSafe(error),
+  };
+
+  try {
+    const response = await fetch(`${supabaseUrl}/rest/v1/checkout_debug_logs`, {
+      method: "POST",
+      headers: {
+        ...getServiceHeaders(serviceRoleKey),
+        Prefer: "return=minimal",
+      },
+      body: JSON.stringify(body),
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      console.error("[CheckoutDebug] checkout_debug_logs insert failed", {
+        step,
+        status: response.status,
+        body: text,
+      });
+    }
+  } catch (debugError) {
+    console.error("[CheckoutDebug] checkout_debug_logs insert threw", {
+      step,
+      reason: getErrorMessage(debugError),
+      stack: getErrorStack(debugError),
+    });
+  }
+}
+
 function isMissingColumnResponse(text: string, columnName: string) {
   const normalized = text.toLowerCase();
   return normalized.includes(columnName.toLowerCase()) &&
     (normalized.includes("column") || normalized.includes("schema cache") || normalized.includes("pgrst204"));
 }
 
-async function fetchSavedOrder(supabaseUrl: string, serviceRoleKey: string, orderId: string, paymentId: string) {
-  const url = new URL(`${supabaseUrl}/rest/v1/orders`);
-  url.searchParams.set("select", "order_id,payment_id,customer_name,customer_email,phone,product_name,quantity,total_price,total_amount,products,shipping_address,created_at");
+async function fetchSavedOrder(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  orderId: string,
+  paymentId: string,
+  sourceTable: "orders" | "test_orders",
+) {
+  const url = new URL(`${supabaseUrl}/rest/v1/${sourceTable}`);
+  const selectWithEnvironment = "order_id,payment_id,customer_name,customer_email,phone,product_name,quantity,total_price,total_amount,products,shipping_address,created_at,environment_mode,db_saved,admin_email_sent,customer_email_sent";
+  const selectLegacy = "order_id,payment_id,customer_name,customer_email,phone,product_name,quantity,total_price,total_amount,products,shipping_address,created_at,db_saved,admin_email_sent,customer_email_sent";
+  url.searchParams.set("select", selectWithEnvironment);
   url.searchParams.set("order_id", `eq.${orderId}`);
   url.searchParams.set("payment_id", `eq.${paymentId}`);
   url.searchParams.set("limit", "1");
 
-  const response = await fetch(url, {
+  let response = await fetch(url, {
     headers: getServiceHeaders(serviceRoleKey),
   });
-  const text = await response.text();
+  let text = await response.text();
+
+  if (!response.ok && isMissingColumnResponse(text, "environment_mode")) {
+    url.searchParams.set("select", selectLegacy);
+    response = await fetch(url, { headers: getServiceHeaders(serviceRoleKey) });
+    text = await response.text();
+  }
 
   if (!response.ok) {
-    throw new Error(`Order lookup failed: ${text || response.status}`);
+    throw new Error(`Order lookup failed from ${sourceTable}: ${text || response.status}`);
   }
 
   const rows = text ? JSON.parse(text) : [];
@@ -461,7 +626,7 @@ async function fetchSavedOrder(supabaseUrl: string, serviceRoleKey: string, orde
 
 async function fetchNotificationStatus(supabaseUrl: string, serviceRoleKey: string, idempotencyKey: string) {
   const url = new URL(`${supabaseUrl}/rest/v1/order_email_notifications`);
-  url.searchParams.set("select", "status,updated_at,provider_message_id,error");
+  url.searchParams.set("select", "status,updated_at,provider_message_id,error,sent_at");
   url.searchParams.set("idempotency_key", `eq.${idempotencyKey}`);
   url.searchParams.set("limit", "1");
 
@@ -567,7 +732,9 @@ async function createNotificationLock(
     return {
       locked: false,
       duplicate: true,
+      sent: true,
       providerMessageId: cleanText(existing && existing.provider_message_id),
+      sentAt: cleanText(existing && existing.sent_at),
     };
   }
 
@@ -583,32 +750,114 @@ async function createNotificationLock(
   return {
     locked: false,
     duplicate: true,
+    sent: false,
     reason: status === "sending" ? "send_already_in_progress" : "notification_already_exists",
   };
 }
 
-async function markCustomerEmailSent(supabaseUrl: string, serviceRoleKey: string, order: NormalizedOrder, sentAt: string) {
-  const url = new URL(`${supabaseUrl}/rest/v1/orders`);
+async function markOrderEmailSent(supabaseUrl: string, serviceRoleKey: string, order: NormalizedOrder, emailType: EmailType, sentAt: string) {
+  const url = new URL(`${supabaseUrl}/rest/v1/${order.sourceTable}`);
   url.searchParams.set("order_id", `eq.${order.orderId}`);
   url.searchParams.set("payment_id", `eq.${order.paymentId}`);
-
-  const response = await fetch(url, {
-    method: "PATCH",
-    headers: getServiceHeaders(serviceRoleKey),
-    body: JSON.stringify({
+  const payload = emailType === "admin"
+    ? {
+      admin_email_sent: true,
+      admin_email_sent_at: sentAt,
+    }
+    : {
       customer_email_sent: true,
       customer_email_sent_at: sentAt,
-    }),
-  });
-  const text = await response.text();
+    };
+  const fallbackPayload = emailType === "admin"
+    ? { admin_email_sent: true }
+    : { customer_email_sent: true };
 
-  if (!response.ok && !isMissingColumnResponse(text, "customer_email_sent")) {
-    console.error("[Email] Customer email sent flag update failed", text || response.status);
+  const sendPatch = async (body: Record<string, unknown>) => {
+    const response = await fetch(url, {
+      method: "PATCH",
+      headers: getServiceHeaders(serviceRoleKey),
+      body: JSON.stringify(body),
+    });
+    return { response, text: await response.text() };
+  };
+
+  let result = await sendPatch(payload);
+
+  if (!result.response.ok && isMissingColumnResponse(result.text, `${emailType}_email_sent_at`)) {
+    result = await sendPatch(fallbackPayload);
+  }
+
+  if (!result.response.ok && !isMissingColumnResponse(result.text, `${emailType}_email_sent`)) {
+    console.error("[Email] Order email sent flag update failed", {
+      orderId: order.orderId,
+      emailType,
+      status: result.response.status,
+      body: result.text,
+    });
   }
 }
 
-async function sendWithResend(content: EmailContent, recipientEmail: string, idempotencyKey: string, order: NormalizedOrder, emailType: EmailType) {
-  const emailConfig = getEmailRuntimeConfig();
+async function recordEmailLog(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  order: NormalizedOrder,
+  emailType: EmailType,
+  result: EmailResult,
+  resendAttempts = 0,
+) {
+  const payload = {
+    order_id: order.orderId,
+    payment_id: order.paymentId || null,
+    email_type: emailType === "admin" ? "owner" : "customer",
+    recipient_email: result.recipient || null,
+    provider: "resend",
+    provider_message_id: result.providerMessageId || null,
+    status: result.status,
+    resend_attempts: Math.max(0, resendAttempts),
+    failure_reason: result.error || result.reason || null,
+    environment_mode: order.environmentMode,
+    source_table: order.sourceTable,
+  };
+  const url = new URL(`${supabaseUrl}/rest/v1/email_logs`);
+  url.searchParams.set("on_conflict", "order_id,payment_id,email_type,environment_mode");
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        ...getServiceHeaders(serviceRoleKey),
+        Prefer: "resolution=merge-duplicates,return=minimal",
+      },
+      body: JSON.stringify(payload),
+    });
+    const text = await response.text();
+
+    if (!response.ok) {
+      console.warn("[Email] email_logs upsert failed", {
+        orderId: order.orderId,
+        emailType,
+        status: response.status,
+        body: text.slice(0, 500),
+      });
+    }
+  } catch (error) {
+    console.warn("[Email] email_logs upsert threw", {
+      orderId: order.orderId,
+      emailType,
+      reason: getErrorMessage(error),
+    });
+  }
+}
+
+async function sendWithResendAttempt(
+  content: EmailContent,
+  recipientEmail: string,
+  idempotencyKey: string,
+  order: NormalizedOrder,
+  emailType: EmailType,
+  attempt: number,
+  emailConfig: ReturnType<typeof getEmailRuntimeConfig>,
+) {
   const response = await fetch(RESEND_API_URL, {
     method: "POST",
     headers: {
@@ -635,20 +884,74 @@ async function sendWithResend(content: EmailContent, recipientEmail: string, ide
     emailType,
     to: recipientEmail,
     from: emailConfig.fromEmail,
+    attempt,
+    maxAttempts: RESEND_MAX_ATTEMPTS,
     status: response.status,
     ok: response.ok,
     body: summarizeResendResponse(responseText),
   });
 
   if (!response.ok) {
-    throw new Error(`Resend send failed (${response.status}): ${responseText || response.status}`);
+    const error = new Error(`Resend send failed (${response.status}): ${responseText || response.status}`);
+    (error as Error & { retryable?: boolean; status?: number }).retryable = shouldRetryResend(response.status);
+    (error as Error & { retryable?: boolean; status?: number }).status = response.status;
+    throw error;
   }
 
-  return parseJsonObject(responseText) || {};
+  return {
+    ...(parseJsonObject(responseText) || {}),
+    attempts: attempt,
+  };
 }
 
-async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: NormalizedOrder, emailType: EmailType): Promise<EmailResult> {
-  const recipientEmail = emailType === "admin" ? ADMIN_RECIPIENT_EMAIL : order.customerEmail;
+async function sendWithResend(
+  content: EmailContent,
+  recipientEmail: string,
+  idempotencyKey: string,
+  order: NormalizedOrder,
+  emailType: EmailType,
+  emailSettings: RuntimeEmailSettings,
+) {
+  const emailConfig = getEmailRuntimeConfig(emailSettings);
+  let lastError: unknown = null;
+
+  for (let attempt = 1; attempt <= RESEND_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await sendWithResendAttempt(content, recipientEmail, idempotencyKey, order, emailType, attempt, emailConfig);
+    } catch (error) {
+      lastError = error;
+      const retryable = Boolean((error as Error & { retryable?: boolean }).retryable) || !(error as Error & { status?: number }).status;
+
+      console.error("[EMAIL FAILED]", {
+        orderId: order.orderId,
+        paymentId: order.paymentId,
+        emailType,
+        recipient: recipientEmail,
+        attempt,
+        maxAttempts: RESEND_MAX_ATTEMPTS,
+        retryable,
+        reason: getErrorMessage(error),
+      });
+
+      if (!retryable || attempt >= RESEND_MAX_ATTEMPTS) {
+        break;
+      }
+
+      await delay(RESEND_RETRY_DELAY_MS * attempt);
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error("Resend send failed");
+}
+
+async function sendEmailJob(
+  supabaseUrl: string,
+  serviceRoleKey: string,
+  order: NormalizedOrder,
+  emailType: EmailType,
+  emailSettings: RuntimeEmailSettings,
+): Promise<EmailResult> {
+  const recipientEmail = emailType === "admin" ? cleanText(emailSettings.notificationEmail || ADMIN_RECIPIENT_EMAIL) : order.customerEmail;
 
   if (emailType === "admin" && !isUsableEmail(recipientEmail)) {
     console.error("[Email] Failure reason", {
@@ -657,12 +960,28 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       recipient: recipientEmail,
       reason: "invalid_admin_recipient_email",
     });
-    return {
+    console.error("[EMAIL FAILED]", {
+      orderId: order.orderId,
+      paymentId: order.paymentId,
+      emailType,
+      recipient: recipientEmail,
+      reason: "invalid_admin_recipient_email",
+    });
+    await logCheckoutDebug(
+      supabaseUrl,
+      serviceRoleKey,
+      "edge_invalid_admin_recipient_email",
+      { orderId: order.orderId, paymentId: order.paymentId, emailType, recipient: recipientEmail },
+      "invalid_admin_recipient_email",
+    );
+    const result: EmailResult = {
       type: emailType,
       status: "failed",
       recipient: recipientEmail,
       error: "invalid_admin_recipient_email",
     };
+    await recordEmailLog(supabaseUrl, serviceRoleKey, order, emailType, result, 0);
+    return result;
   }
 
   if (emailType === "customer" && !isUsableEmail(recipientEmail)) {
@@ -672,12 +991,28 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       recipient: recipientEmail,
       reason: "missing_customer_email",
     });
-    return {
+    console.error("[EMAIL FAILED]", {
+      orderId: order.orderId,
+      paymentId: order.paymentId,
+      emailType,
+      recipient: recipientEmail,
+      reason: "missing_customer_email",
+    });
+    await logCheckoutDebug(
+      supabaseUrl,
+      serviceRoleKey,
+      "edge_missing_customer_email",
+      { orderId: order.orderId, paymentId: order.paymentId, emailType, recipient: recipientEmail },
+      "missing_customer_email",
+    );
+    const result: EmailResult = {
       type: emailType,
       status: "skipped",
       recipient: recipientEmail,
       reason: "missing_customer_email",
     };
+    await recordEmailLog(supabaseUrl, serviceRoleKey, order, emailType, result, 0);
+    return result;
   }
 
   const idempotencyKey = buildIdempotencyKey(order.orderId, order.paymentId, emailType);
@@ -708,19 +1043,44 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
     const lock = await createNotificationLock(supabaseUrl, serviceRoleKey, idempotencyKey, emailType, recipientEmail, order);
 
     if (!lock.locked) {
+      const lockRecord = lock as Record<string, unknown>;
+      const alreadySent = Boolean(lockRecord.sent) || Boolean(cleanText(lockRecord.providerMessageId));
+      const providerMessageId = cleanText(lockRecord.providerMessageId);
       console.log("[Email] Duplicate notification skipped", {
         orderId: order.orderId,
         emailType,
         recipient: recipientEmail,
-        reason: cleanText((lock as Record<string, unknown>).reason),
+        alreadySent,
+        reason: cleanText(lockRecord.reason),
       });
-      return {
+      if (alreadySent) {
+        try {
+          await markOrderEmailSent(
+            supabaseUrl,
+            serviceRoleKey,
+            order,
+            emailType,
+            cleanText(lockRecord.sentAt) || new Date().toISOString(),
+          );
+        } catch (markError) {
+          console.error("[Email] Failure reason", {
+            orderId: order.orderId,
+            emailType,
+            stage: "mark_duplicate_email_sent",
+            reason: getErrorMessage(markError),
+            stack: getErrorStack(markError),
+          });
+        }
+      }
+      const result: EmailResult = {
         type: emailType,
-        status: "duplicate",
+        status: alreadySent ? "duplicate" : "skipped",
         recipient: recipientEmail,
-        providerMessageId: cleanText((lock as Record<string, unknown>).providerMessageId),
-        reason: cleanText((lock as Record<string, unknown>).reason),
+        providerMessageId,
+        reason: cleanText(lockRecord.reason),
       };
+      await recordEmailLog(supabaseUrl, serviceRoleKey, order, emailType, result, 0);
+      return result;
     }
   } catch (error) {
     notificationLockAvailable = false;
@@ -732,6 +1092,13 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       reason: getErrorMessage(error),
       stack: getErrorStack(error),
     });
+    await logCheckoutDebug(
+      supabaseUrl,
+      serviceRoleKey,
+      "edge_notification_lock_failed",
+      { orderId: order.orderId, paymentId: order.paymentId, emailType, recipient: recipientEmail },
+      error,
+    );
     console.warn("[Email] Continuing without notification lock; Resend idempotency still applies", {
       orderId: order.orderId,
       emailType,
@@ -758,7 +1125,7 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       });
     }
 
-    const resendResponse = await sendWithResend(content, recipientEmail, idempotencyKey, order, emailType);
+    const resendResponse = await sendWithResend(content, recipientEmail, idempotencyKey, order, emailType, emailSettings);
     const sentAt = new Date().toISOString();
     const providerMessageId = cleanText(resendResponse.id);
 
@@ -781,18 +1148,28 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       }
     }
 
-    if (emailType === "customer") {
-      try {
-        await markCustomerEmailSent(supabaseUrl, serviceRoleKey, order, sentAt);
-      } catch (markError) {
-        console.error("[Email] Failure reason", {
-          orderId: order.orderId,
-          emailType,
-          stage: "mark_customer_email_sent",
-          reason: getErrorMessage(markError),
-          stack: getErrorStack(markError),
-        });
-      }
+    try {
+      await markOrderEmailSent(supabaseUrl, serviceRoleKey, order, emailType, sentAt);
+    } catch (markError) {
+      console.error("[Email] Failure reason", {
+        orderId: order.orderId,
+        emailType,
+        stage: `mark_${emailType}_email_sent`,
+        reason: getErrorMessage(markError),
+        stack: getErrorStack(markError),
+      });
+    }
+
+    console.log(emailType === "admin" ? "[ADMIN EMAIL SENT]" : "[CUSTOMER EMAIL SENT]", {
+      orderId: order.orderId,
+      paymentId: order.paymentId,
+      to: recipientEmail,
+      providerMessageId,
+    });
+    if (emailType === "admin") {
+      console.log("[STEP 6] Admin email sent");
+    } else {
+      console.log("[STEP 7] Customer email sent");
     }
 
     console.log("[Email] Success", {
@@ -802,12 +1179,21 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       providerMessageId,
     });
 
-    return {
+    const result: EmailResult = {
       type: emailType,
       status: "sent",
       recipient: recipientEmail,
       providerMessageId,
     };
+    await recordEmailLog(
+      supabaseUrl,
+      serviceRoleKey,
+      order,
+      emailType,
+      result,
+      Math.max(0, cleanNumber((resendResponse as Record<string, unknown>).attempts, 1) - 1),
+    );
+    return result;
   } catch (error) {
     const message = getErrorMessage(error);
 
@@ -821,17 +1207,35 @@ async function sendEmailJob(supabaseUrl: string, serviceRoleKey: string, order: 
       reason: message,
       stack: getErrorStack(error),
     });
-    return {
+    console.error("[EMAIL FAILED]", {
+      orderId: order.orderId,
+      paymentId: order.paymentId,
+      emailType,
+      recipient: recipientEmail,
+      reason: message,
+    });
+    await logCheckoutDebug(
+      supabaseUrl,
+      serviceRoleKey,
+      "edge_send_email_failed",
+      { orderId: order.orderId, paymentId: order.paymentId, emailType, recipient: recipientEmail },
+      error,
+    );
+    const result: EmailResult = {
       type: emailType,
       status: "failed",
       recipient: recipientEmail,
       error: message,
     };
+    await recordEmailLog(supabaseUrl, serviceRoleKey, order, emailType, result, RESEND_MAX_ATTEMPTS - 1);
+    return result;
   }
 }
 
 Deno.serve(async (req) => {
   const requestId = crypto.randomUUID();
+  let supabaseUrl = "";
+  let serviceRoleKey = "";
 
   console.log("[Email] Function called", {
     requestId,
@@ -857,13 +1261,20 @@ Deno.serve(async (req) => {
   try {
     logRuntimeConfig(requestId);
 
-    const supabaseUrl = getRequiredEnv("SUPABASE_URL").replace(/\/+$/, "");
-    const serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
+    supabaseUrl = getRequiredEnv("SUPABASE_URL").replace(/\/+$/, "");
+    serviceRoleKey = getRequiredEnv("SUPABASE_SERVICE_ROLE_KEY");
     const body = await req.json();
     const requestOrder = body && typeof body.order === "object" ? body.order as Record<string, unknown> : {};
     const requestPayment = requestOrder.payment && typeof requestOrder.payment === "object"
       ? requestOrder.payment as Record<string, unknown>
       : {};
+    const requestEnvironment = requestOrder.environment && typeof requestOrder.environment === "object"
+      ? requestOrder.environment as Record<string, unknown>
+      : {};
+    const environmentMode = requestOrder.environment_mode || requestEnvironment.mode
+      ? normalizeEnvironmentMode(requestOrder.environment_mode || requestEnvironment.mode)
+      : "production";
+    const sourceTable = getSourceTableForMode(environmentMode);
     const orderId = cleanText(requestOrder.id);
     const paymentId = cleanText(requestPayment.id);
 
@@ -871,6 +1282,8 @@ Deno.serve(async (req) => {
       requestId,
       orderId,
       paymentId,
+      environmentMode,
+      sourceTable,
       itemCount: Array.isArray(requestOrder.items) ? requestOrder.items.length : 0,
       customerEmail: cleanText((requestOrder.customer as Record<string, unknown> | undefined)?.email),
       totalAmount: cleanNumber(requestOrder.total_amount),
@@ -883,10 +1296,17 @@ Deno.serve(async (req) => {
         orderId,
         paymentId,
       });
+      await logCheckoutDebug(
+        supabaseUrl,
+        serviceRoleKey,
+        "edge_missing_order_or_payment_id",
+        { requestId, orderId, paymentId },
+        "missing_order_or_payment_id",
+      );
       return jsonResponse({ ok: false, error: "missing_order_or_payment_id" }, 400);
     }
 
-    const savedOrder = await fetchSavedOrder(supabaseUrl, serviceRoleKey, orderId, paymentId);
+    const savedOrder = await fetchSavedOrder(supabaseUrl, serviceRoleKey, orderId, paymentId, sourceTable);
 
     if (!savedOrder) {
       console.error("[Email] Failure reason", {
@@ -895,6 +1315,13 @@ Deno.serve(async (req) => {
         orderId,
         paymentId,
       });
+      await logCheckoutDebug(
+        supabaseUrl,
+        serviceRoleKey,
+        "edge_saved_order_not_found",
+        { requestId, orderId, paymentId },
+        "saved_order_not_found",
+      );
       return jsonResponse({ ok: false, error: "saved_order_not_found" }, 404);
     }
 
@@ -903,14 +1330,25 @@ Deno.serve(async (req) => {
       requestId,
       orderId: order.orderId,
       paymentId: order.paymentId,
+      environmentMode: order.environmentMode,
+      sourceTable: order.sourceTable,
       customerEmail: order.customerEmail,
       itemCount: order.items.length,
       totalAmount: order.totalAmount,
     });
+    console.log("[ORDER SAVED]", {
+      requestId,
+      orderId: order.orderId,
+      paymentId: order.paymentId,
+      db_saved: Boolean(savedOrder.db_saved),
+      admin_email_sent: Boolean(savedOrder.admin_email_sent),
+      customer_email_sent: Boolean(savedOrder.customer_email_sent),
+    });
 
+    const emailSettings = await fetchRuntimeEmailSettings(supabaseUrl, serviceRoleKey);
     const emailResults = [
-      await sendEmailJob(supabaseUrl, serviceRoleKey, order, "admin"),
-      await sendEmailJob(supabaseUrl, serviceRoleKey, order, "customer"),
+      await sendEmailJob(supabaseUrl, serviceRoleKey, order, "admin", emailSettings),
+      await sendEmailJob(supabaseUrl, serviceRoleKey, order, "customer", emailSettings),
     ];
     const complete = emailResults.every((result) => result.status === "sent" || result.status === "duplicate");
     const adminEmailSent = emailResults.some((result) => result.type === "admin" && (result.status === "sent" || result.status === "duplicate"));
@@ -943,6 +1381,13 @@ Deno.serve(async (req) => {
       stack: getErrorStack(error),
     });
     console.error("[Email] send-order-notification failed", message);
+    await logCheckoutDebug(
+      supabaseUrl,
+      serviceRoleKey,
+      "edge_function_failed",
+      { requestId },
+      error,
+    );
     return jsonResponse({ ok: false, error: message }, 500);
   }
 });

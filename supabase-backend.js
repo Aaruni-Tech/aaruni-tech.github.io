@@ -2,13 +2,15 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 let supabaseClient = null;
 
-const ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
+const ORDER_STATUSES = ["Processing", "Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered", "Cancelled"];
 const ORDER_EMAIL_FUNCTION_NAME =
   (window.AARUNI_CONFIG &&
     window.AARUNI_CONFIG.email &&
     window.AARUNI_CONFIG.email.orderNotificationFunctionName) ||
   "send-order-notification";
 const ORDER_EMAIL_STORAGE_PREFIX = "aaruniOrderEmailNotification:";
+const ORDER_EMAIL_INVOKE_MAX_ATTEMPTS = 3;
+const ORDER_EMAIL_RETRY_DELAY_MS = 1200;
 const CUSTOMER_PROFILE_TABLE = "customer_profiles";
 
 console.log("[Supabase] Backend init", {
@@ -28,6 +30,20 @@ function isConfigured() {
   return Boolean(
     url && anonKey
   );
+}
+
+function normalizeRuntimeMode(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return raw === "production" || raw === "prod" || raw === "live" ? "production" : "test";
+}
+
+function getRuntimeMode() {
+  const config = window.AARUNI_CONFIG || {};
+  return normalizeRuntimeMode(config.isProduction ? "production" : config.mode || window.AARUNI_ENVIRONMENT || "test");
+}
+
+function getOrderSourceTable() {
+  return getRuntimeMode() === "test" ? "test_orders" : "orders";
 }
 
 function maskValue(value) {
@@ -413,12 +429,76 @@ function toSupabaseErrorDetails(error) {
   }
 
   return {
+    status: error.status || (error.context && error.context.status) || "",
+    statusText: error.statusText || (error.context && error.context.statusText) || "",
     message: toSafeMessage(error),
     code: error.code || "",
     details: error.details || "",
     hint: error.hint || "",
     raw: error,
   };
+}
+
+function toDebugError(error) {
+  const details = toSupabaseErrorDetails(error);
+
+  if (!details) {
+    return null;
+  }
+
+  return {
+    status: details.status || "",
+    statusText: details.statusText || "",
+    code: details.code || "",
+    message: details.message || "",
+    details: details.details || "",
+    hint: details.hint || "",
+  };
+}
+
+function toJsonSafe(value) {
+  if (value === undefined) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return { value: String(value) };
+  }
+}
+
+async function logCheckoutDebug({ step, payload, error }) {
+  if (!isConfigured()) {
+    return { ok: false, skipped: true, reason: "Supabase is not configured." };
+  }
+
+  const debugRow = {
+    step: String(step || "unknown").slice(0, 200),
+    payload: toJsonSafe(payload) || {},
+    error: toDebugError(error) || toJsonSafe(error) || null,
+  };
+
+  try {
+    console.info("[CheckoutDebug] Writing checkout_debug_logs", debugRow);
+    const { error: insertError, status, statusText } = await getClient()
+      .from("checkout_debug_logs")
+      .insert(debugRow);
+
+    if (insertError) {
+      console.warn("[CheckoutDebug] checkout_debug_logs insert failed", {
+        status,
+        statusText,
+        error: toDebugError({ ...insertError, status, statusText }),
+      });
+      return { ok: false, error: toSafeMessage(insertError), details: toDebugError({ ...insertError, status, statusText }) };
+    }
+
+    return { ok: true };
+  } catch (debugError) {
+    console.warn("[CheckoutDebug] checkout_debug_logs insert threw", toDebugError(debugError));
+    return { ok: false, error: toSafeMessage(debugError), details: toDebugError(debugError) };
+  }
 }
 
 function isMissingColumnError(errorDetails, columnName) {
@@ -440,24 +520,40 @@ function isMissingFunctionError(errorDetails, fnName) {
 }
 
 async function insertWithFallback({ client, table, payloads, select }) {
+  let lastError = null;
+
   for (let index = 0; index < payloads.length; index += 1) {
     const payload = payloads[index];
     try {
+      console.info("[Supabase] Insert attempt", {
+        table,
+        variant: index + 1,
+        variants: payloads.length,
+        columns: Object.keys(payload),
+      });
       const query = client.from(table).insert(payload);
-      const { data, error } = select ? await query.select(select).single() : await query;
+      const response = select ? await query.select(select).single() : await query;
+      const { data, error, status, statusText } = response;
 
       if (!error) {
         return { ok: true, data, usedIndex: index };
       }
 
-      const details = toSupabaseErrorDetails(error);
+      const details = toSupabaseErrorDetails({ ...error, status, statusText });
+      lastError = details;
       console.warn(`[Supabase] Insert into ${table} failed (variant ${index + 1}/${payloads.length})`, details);
     } catch (error) {
+      lastError = toSupabaseErrorDetails(error);
       console.warn(`[Supabase] Insert into ${table} threw (variant ${index + 1}/${payloads.length})`, error);
     }
   }
 
-  return { ok: false };
+  console.error("[SUPABASE INSERT FAILED]", {
+    table,
+    variants: payloads.length,
+    lastError,
+  });
+  return { ok: false, error: toSafeMessage(lastError), details: lastError };
 }
 
 function normalizeStatus(value) {
@@ -470,6 +566,20 @@ function normalizeStatus(value) {
   // Backwards-compat: older local-only statuses.
   if (raw === "Confirmed") {
     return "Order Confirmed";
+  }
+
+  const lower = raw.toLowerCase();
+  if (lower === "pending" || lower === "processing") {
+    return "Processing";
+  }
+  if (lower === "shipped") {
+    return "Shipped";
+  }
+  if (lower === "delivered") {
+    return "Delivered";
+  }
+  if (lower === "cancelled" || lower === "canceled") {
+    return "Cancelled";
   }
 
   if (ORDER_STATUSES.includes(raw)) {
@@ -690,6 +800,12 @@ function getOrderEmailNotificationKey(order) {
   return orderId && paymentId ? `${orderId}:${paymentId}` : "";
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function hasStoredOrderEmailNotification(key) {
   if (!key) return false;
 
@@ -741,6 +857,13 @@ function buildOrderNotificationPayload(order) {
         id: getOrderPaymentId(order),
         status: String((order && order.payment && order.payment.status) || order.payment_status || "Paid").trim(),
       },
+      environment: {
+        mode: normalizeRuntimeMode(
+          (order && order.environment && order.environment.mode) ||
+            order.environment_mode ||
+            (order && order.payment && order.payment.mode === "test" ? "test" : "production")
+        ),
+      },
       items,
       total_quantity: Number((order && order.totalQuantity) || order.quantity || 0),
       total_amount: Number((order && order.totalAmount) || order.total_amount || order.total_price || 0),
@@ -769,6 +892,11 @@ function summarizeOrderNotificationPayload(payload) {
 
 async function sendOrderNotificationEmail(order) {
   if (!isConfigured()) {
+    await logCheckoutDebug({
+      step: "email_supabase_not_configured",
+      payload: { orderId: order && order.id, paymentId: getOrderPaymentId(order) },
+      error: "Supabase is not configured.",
+    });
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
   }
 
@@ -778,21 +906,40 @@ async function sendOrderNotificationEmail(order) {
   const paymentStatus = String((order && order.payment && order.payment.status) || order.payment_status || "").toLowerCase();
 
   if (!orderId || !paymentId || paymentId === "not available") {
+    await logCheckoutDebug({
+      step: "email_missing_order_or_payment_id",
+      payload: { orderId, paymentId },
+      error: "Missing order ID or payment ID for email notification.",
+    });
     return { ok: false, skipped: true, reason: "Missing order ID or payment ID for email notification." };
   }
 
   if (paymentStatus && paymentStatus !== "paid") {
+    await logCheckoutDebug({
+      step: "email_payment_not_paid",
+      payload: { orderId, paymentId, paymentStatus },
+      error: `Payment status is ${paymentStatus}.`,
+    });
     return { ok: false, skipped: true, reason: `Payment status is ${paymentStatus}.` };
   }
 
   if (hasStoredOrderEmailNotification(notificationKey)) {
-    return { ok: true, skipped: true, duplicate: true, reason: "Order notification already sent from this browser." };
+    return {
+      ok: true,
+      complete: true,
+      skipped: true,
+      duplicate: true,
+      adminEmailSent: true,
+      customerEmailSent: true,
+      reason: "Order notification already sent from this browser.",
+    };
   }
 
   const client = getClient();
   const payload = buildOrderNotificationPayload(order);
   const functionUrl = getOrderEmailFunctionUrl();
 
+  console.log("[STEP 5] Triggering email function");
   console.info("[OrderEmail] Invoking send-order-notification", {
     orderId,
     paymentId,
@@ -801,66 +948,297 @@ async function sendOrderNotificationEmail(order) {
     payload: summarizeOrderNotificationPayload(payload),
   });
 
-  try {
-    const { data, error } = await client.functions.invoke(ORDER_EMAIL_FUNCTION_NAME, {
-      body: payload,
-    });
+  let lastFailure = null;
 
-    if (error) {
-      const status = error && error.context && error.context.status ? Number(error.context.status) : 0;
-      const details = toSupabaseErrorDetails(error);
-
-      console.error("[OrderEmail] send-order-notification returned error", {
-        orderId,
-        paymentId,
-        functionName: ORDER_EMAIL_FUNCTION_NAME,
-        functionUrl,
-        status,
-        details,
-      });
-
-      if (status === 404) {
-        return {
-          ok: false,
-          skipped: true,
-          reason: "Order email Edge Function is not deployed.",
-          details,
-        };
-      }
-
-      return { ok: false, error: toSafeMessage(error), details };
-    }
-
-    console.info("[OrderEmail] send-order-notification response", {
-      orderId,
-      paymentId,
-      functionName: ORDER_EMAIL_FUNCTION_NAME,
-      data,
-    });
-
-    if (data && (data.ok || data.duplicate) && data.complete !== false) {
-      storeOrderEmailNotification(notificationKey);
-    }
-
-    return data || { ok: false, error: "Empty email function response." };
-  } catch (error) {
-    console.error("[OrderEmail] send-order-notification threw", {
+  for (let attempt = 1; attempt <= ORDER_EMAIL_INVOKE_MAX_ATTEMPTS; attempt += 1) {
+    console.info("[Edge Function invoke]", {
       orderId,
       paymentId,
       functionName: ORDER_EMAIL_FUNCTION_NAME,
       functionUrl,
-      error: toSafeMessage(error),
-      details: toSupabaseErrorDetails(error),
+      attempt,
+      maxAttempts: ORDER_EMAIL_INVOKE_MAX_ATTEMPTS,
     });
-    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+
+    try {
+      const { data, error } = await client.functions.invoke(ORDER_EMAIL_FUNCTION_NAME, {
+        body: payload,
+      });
+
+      if (error) {
+        const status = error && error.context && error.context.status ? Number(error.context.status) : 0;
+        const details = toSupabaseErrorDetails(error);
+        lastFailure = { ok: false, error: toSafeMessage(error), details, status };
+
+        console.error("[OrderEmail] send-order-notification returned error", {
+          orderId,
+          paymentId,
+          functionName: ORDER_EMAIL_FUNCTION_NAME,
+          functionUrl,
+          attempt,
+          status,
+          details,
+        });
+        console.error("[EMAIL FAILED]", {
+          orderId,
+          paymentId,
+          stage: "edge_function_invoke",
+          attempt,
+          status,
+          details,
+        });
+        await logCheckoutDebug({
+          step: "edge_function_invoke_failed",
+          payload: { orderId, paymentId, functionName: ORDER_EMAIL_FUNCTION_NAME, functionUrl, attempt, status },
+          error: { ...details, status },
+        });
+
+        if (status === 404) {
+          return {
+            ok: false,
+            skipped: true,
+            reason: "Order email Edge Function is not deployed.",
+            details,
+          };
+        }
+
+        if (attempt < ORDER_EMAIL_INVOKE_MAX_ATTEMPTS) {
+          await delay(ORDER_EMAIL_RETRY_DELAY_MS * attempt);
+          continue;
+        }
+
+        return lastFailure;
+      }
+
+      console.info("[OrderEmail] send-order-notification response", {
+        orderId,
+        paymentId,
+        functionName: ORDER_EMAIL_FUNCTION_NAME,
+        attempt,
+        data,
+      });
+
+      if (data && (data.ok || data.duplicate) && data.complete !== false) {
+        if (data.adminEmailSent) {
+          console.log("[STEP 6] Admin email sent");
+        }
+        if (data.customerEmailSent) {
+          console.log("[STEP 7] Customer email sent");
+        }
+        storeOrderEmailNotification(notificationKey);
+        return data;
+      }
+
+      lastFailure = data || { ok: false, error: "Empty email function response." };
+      console.error("[EMAIL FAILED]", {
+        orderId,
+        paymentId,
+        stage: "edge_function_response",
+        attempt,
+        result: lastFailure,
+      });
+      await logCheckoutDebug({
+        step: "edge_function_incomplete_response",
+        payload: { orderId, paymentId, functionName: ORDER_EMAIL_FUNCTION_NAME, functionUrl, attempt },
+        error: lastFailure,
+      });
+
+      if (attempt < ORDER_EMAIL_INVOKE_MAX_ATTEMPTS) {
+        await delay(ORDER_EMAIL_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      return lastFailure;
+    } catch (error) {
+      lastFailure = { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+      console.error("[OrderEmail] send-order-notification threw", {
+        orderId,
+        paymentId,
+        functionName: ORDER_EMAIL_FUNCTION_NAME,
+        functionUrl,
+        attempt,
+        error: toSafeMessage(error),
+        details: toSupabaseErrorDetails(error),
+      });
+      console.error("[EMAIL FAILED]", {
+        orderId,
+        paymentId,
+        stage: "edge_function_throw",
+        attempt,
+        error: toSafeMessage(error),
+      });
+      await logCheckoutDebug({
+        step: "edge_function_throw",
+        payload: { orderId, paymentId, functionName: ORDER_EMAIL_FUNCTION_NAME, functionUrl, attempt },
+        error,
+      });
+
+      if (attempt < ORDER_EMAIL_INVOKE_MAX_ATTEMPTS) {
+        await delay(ORDER_EMAIL_RETRY_DELAY_MS * attempt);
+      }
+    }
   }
+
+  return lastFailure || { ok: false, error: "Order email Edge Function failed after retries." };
+}
+
+async function saveDirectOrderToTable({ client, tableName, orderDraft, paymentId, account, buyer, createdAtIso, runtimeMode }) {
+  const items = Array.isArray(orderDraft.items) ? orderDraft.items : [];
+  const productsText = items
+    .map((item) => `${item.name || "Product"} x ${Number(item.quantity || 1)}`)
+    .filter(Boolean)
+    .join(", ");
+  const productsJson = buildProductsJsonbPayload(items);
+  const totalQty = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || Number(orderDraft.totalQuantity || 0) || 1;
+  const gst = orderDraft.gst || {};
+  const commercePayload = {
+    environment_mode: runtimeMode,
+    shipping_fee: Number(orderDraft.shippingFee ?? orderDraft.shippingCharge ?? 0),
+    gst_enabled: Boolean(gst.enabled),
+    gst_percent: Number(gst.percent || 0),
+    gst_amount: Number(orderDraft.gstAmount ?? gst.amount ?? 0),
+  };
+  const basePayload = {
+    customer_name: buyer.name || "Customer",
+    customer_email: buyer.email || null,
+    phone: buyer.phone || null,
+    product_name: productsText || "Cart items",
+    quantity: totalQty,
+    total_price: Number(orderDraft.totalAmount || 0),
+    total_amount: Number(orderDraft.totalAmount || 0),
+    subtotal: Number(orderDraft.subtotal || orderDraft.totalAmount || 0),
+    products: productsJson,
+    cart_items: productsJson,
+    shipping_address: buyer.address || "",
+    payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
+    payment_status: paymentId ? "Paid" : "Pending",
+    order_id: orderDraft.id,
+    user_id: account.user.id,
+    db_saved: true,
+    admin_email_sent: false,
+    customer_email_sent: false,
+  };
+  const status = runtimeMode === "test" ? "Processing" : normalizeStatus(orderDraft.status || "Order Confirmed");
+  const liveSchemaPayload = {
+    user_id: basePayload.user_id,
+    customer_name: basePayload.customer_name,
+    customer_email: basePayload.customer_email,
+    phone: basePayload.phone,
+    shipping_address: basePayload.shipping_address,
+    payment_id: basePayload.payment_id,
+    payment_status: basePayload.payment_status,
+    order_status: status,
+    order_id: basePayload.order_id,
+    products: productsJson,
+    total_amount: Number(orderDraft.totalAmount || 0),
+    db_saved: true,
+    admin_email_sent: false,
+    customer_email_sent: false,
+  };
+
+  console.info("[Supabase] Trying direct order insert", {
+    tableName,
+    runtimeMode,
+    productsText,
+    totalQty,
+    totalPrice: Number(orderDraft.totalAmount || 0),
+  });
+
+  const insert = await insertWithFallback({
+    client,
+    table: tableName,
+    payloads: [
+      { ...basePayload, ...commercePayload, order_status: status, status },
+      { ...liveSchemaPayload, ...commercePayload, status },
+      { ...basePayload, order_status: status, status },
+      liveSchemaPayload,
+    ],
+  });
+
+  if (!insert.ok) {
+    console.error("[SUPABASE INSERT FAILED]", {
+      table: tableName,
+      orderId: basePayload.order_id,
+      paymentId: basePayload.payment_id,
+      details: insert.details || insert.error || null,
+    });
+    await logCheckoutDebug({
+      step: `${tableName}_direct_insert_failed`,
+      payload: { paymentId: basePayload.payment_id, orderId: basePayload.order_id, tableName, runtimeMode },
+      error: insert.details || insert.error || `${tableName} insert failed`,
+    });
+    return { ok: false, error: insert.error || `${tableName} insert failed`, details: insert.details };
+  }
+
+  const orderAtIso = createdAtIso;
+  const orderAtDate = new Date(orderAtIso);
+  const upgradedOrder = {
+    ...orderDraft,
+    id: basePayload.order_id,
+    invoiceNumber: orderDraft.invoiceNumber || `INV-${basePayload.order_id}`,
+    status,
+    db_saved: true,
+    admin_email_sent: false,
+    customer_email_sent: false,
+    createdAt: orderAtIso,
+    orderDate: new Intl.DateTimeFormat("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(orderAtDate),
+    orderTime: new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit" }).format(orderAtDate),
+    subtotal: Number(orderDraft.subtotal || 0),
+    totalAmount: Number(orderDraft.totalAmount || 0),
+    payment: {
+      provider: "Razorpay",
+      id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "not available",
+      status: paymentId ? "Paid" : "Pending",
+      mode: runtimeMode === "test" ? "test" : "live",
+    },
+    environment: {
+      mode: runtimeMode,
+      label: runtimeMode === "test" ? "TEST MODE" : "LIVE MODE",
+      isTest: runtimeMode === "test",
+    },
+    statusHistory: [
+      {
+        status,
+        at: orderAtIso,
+      },
+    ],
+    backend: {
+      provider: "supabase",
+      schema: tableName,
+      orderRowId: null,
+      userId: account.user.id,
+    },
+  };
+
+  console.info("[ORDER SAVED]", {
+    orderId: upgradedOrder.id,
+    paymentId: upgradedOrder.payment.id,
+    schema: upgradedOrder.backend.schema,
+    db_saved: upgradedOrder.db_saved,
+    admin_email_sent: upgradedOrder.admin_email_sent,
+    customer_email_sent: upgradedOrder.customer_email_sent,
+  });
+  console.log("[STEP 4] Order inserted into Supabase");
+
+  return { ok: true, order: upgradedOrder };
 }
 
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
+  console.log("[STEP 3] Starting saveOrderAfterPayment");
+
   if (!isConfigured()) {
     console.warn("[Supabase] Not configured", {
       url: window.SUPABASE_URL || "",
       anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY),
+    });
+    await logCheckoutDebug({
+      step: "save_order_supabase_not_configured",
+      payload: { paymentId, orderId: orderDraft && orderDraft.id, supabaseUrl: window.SUPABASE_URL || "", anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY) },
+      error: "Supabase is not configured.",
     });
     return {
       ok: false,
@@ -871,6 +1249,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   }
 
   if (!orderDraft) {
+    await logCheckoutDebug({
+      step: "save_order_missing_order_draft",
+      payload: { paymentId },
+      error: "Missing order draft.",
+    });
     return { ok: false, error: "Missing order draft." };
   }
 
@@ -878,6 +1261,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   const account = await getCurrentAccount();
 
   if (!account.user) {
+    await logCheckoutDebug({
+      step: "save_order_auth_required",
+      payload: { paymentId, orderId: orderDraft.id },
+      error: "Login is required before checkout.",
+    });
     return { ok: false, error: "Login is required before checkout.", code: "auth_required" };
   }
 
@@ -891,10 +1279,14 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       address: accountProfile.address || (orderDraft.buyer && orderDraft.buyer.address) || "",
     };
     const createdAtIso = orderDraft.createdAt || new Date().toISOString();
+    const runtimeMode = getRuntimeMode();
+    const targetOrderTable = getOrderSourceTable();
 
     console.info("[Supabase] saveOrderAfterPayment start", {
       paymentId,
       draftId: orderDraft.id,
+      runtimeMode,
+      targetOrderTable,
       userId: account.user.id,
       items: Array.isArray(orderDraft.items) ? orderDraft.items.length : 0,
       buyer: {
@@ -903,6 +1295,19 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         phone: buyer.phone,
       },
     });
+
+    if (runtimeMode === "test") {
+      return saveDirectOrderToTable({
+        client,
+        tableName: "test_orders",
+        orderDraft,
+        paymentId,
+        account,
+        buyer,
+        createdAtIso,
+        runtimeMode,
+      });
+    }
 
     // Best-effort: store customer profile in `users` if the ecommerce schema is installed.
     // This is optional and safe to ignore if the table doesn't exist or RLS blocks it.
@@ -981,6 +1386,9 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
             id: orderId,
             invoiceNumber: orderDraft.invoiceNumber || `INV-${orderId}`,
             status: normalizeStatus(rpcOrder.order_status || "Order Confirmed"),
+            db_saved: true,
+            admin_email_sent: Boolean(rpcOrder.admin_email_sent),
+            customer_email_sent: Boolean(rpcOrder.customer_email_sent),
             createdAt: orderAtIso,
             orderDate: new Intl.DateTimeFormat("en-IN", {
               day: "2-digit",
@@ -1009,12 +1417,27 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
             },
           };
 
+          console.info("[ORDER SAVED]", {
+            orderId,
+            paymentId: upgradedOrder.payment.id,
+            schema: upgradedOrder.backend.schema,
+            db_saved: upgradedOrder.db_saved,
+            admin_email_sent: upgradedOrder.admin_email_sent,
+            customer_email_sent: upgradedOrder.customer_email_sent,
+          });
+          console.log("[STEP 4] Order inserted into Supabase");
+
           return { ok: true, order: upgradedOrder };
         }
 
         if (rpcError) {
           const details = toSupabaseErrorDetails(rpcError);
           console.warn("[Supabase] RPC place_order_cart failed", details);
+          await logCheckoutDebug({
+            step: "place_order_cart_rpc_failed",
+            payload: { paymentId, orderId: orderDraft.id, rpcPayload },
+            error: details,
+          });
 
           if (isMissingFunctionError(details, "place_order_cart")) {
             console.warn("[Supabase] Missing RPC place_order_cart. Install it via SQL migration.");
@@ -1023,6 +1446,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       }
     } catch (error) {
       console.warn("[Supabase] RPC place_order_cart threw", error);
+      await logCheckoutDebug({
+        step: "place_order_cart_rpc_threw",
+        payload: { paymentId, orderId: orderDraft.id },
+        error,
+      });
     }
 
     // If the v2 `orders` table exists but RPC is not installed, at least store the order row (no stock decrement).
@@ -1040,6 +1468,14 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         totalQty,
         totalPrice: Number(orderDraft.totalAmount || 0),
       });
+      const gst = orderDraft.gst || {};
+      const commercePayload = {
+        environment_mode: runtimeMode,
+        shipping_fee: Number(orderDraft.shippingFee ?? orderDraft.shippingCharge ?? 0),
+        gst_enabled: Boolean(gst.enabled),
+        gst_percent: Number(gst.percent || 0),
+        gst_amount: Number(orderDraft.gstAmount ?? gst.amount ?? 0),
+      };
       const basePayload = {
         customer_name: buyer.name || "Customer",
         customer_email: buyer.email || null,
@@ -1056,6 +1492,9 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         payment_status: paymentId ? "Paid" : "Pending",
         order_id: orderDraft.id,
         user_id: account.user.id,
+        db_saved: true,
+        admin_email_sent: false,
+        customer_email_sent: false,
       };
       const liveSchemaPayload = {
         user_id: basePayload.user_id,
@@ -1069,6 +1508,9 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         order_id: basePayload.order_id,
         products: productsJson,
         total_amount: Number(orderDraft.totalAmount || 0),
+        db_saved: true,
+        admin_email_sent: false,
+        customer_email_sent: false,
       };
       const liveSchemaMinimalPayload = {
         user_id: basePayload.user_id,
@@ -1081,16 +1523,19 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         order_id: basePayload.order_id,
         products: productsJson,
         total_amount: Number(orderDraft.totalAmount || 0),
+        db_saved: true,
+        admin_email_sent: false,
+        customer_email_sent: false,
       };
 
       const v2Insert = await insertWithFallback({
         client,
         table: "orders",
         payloads: [
-          { ...basePayload, order_status: normalizeStatus(orderDraft.status || "Order Confirmed") },
-          liveSchemaPayload,
-          liveSchemaMinimalPayload,
-          { ...basePayload, status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          { ...basePayload, ...commercePayload, order_status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          { ...liveSchemaPayload, ...commercePayload },
+          { ...liveSchemaMinimalPayload, ...commercePayload },
+          { ...basePayload, ...commercePayload, status: normalizeStatus(orderDraft.status || "Order Confirmed") },
           { ...basePayload },
         ],
       });
@@ -1104,6 +1549,9 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           id: basePayload.order_id,
           invoiceNumber: orderDraft.invoiceNumber || `INV-${basePayload.order_id}`,
           status: normalizeStatus(orderDraft.status || "Order Confirmed"),
+          db_saved: true,
+          admin_email_sent: false,
+          customer_email_sent: false,
           createdAt: orderAtIso,
           orderDate: new Intl.DateTimeFormat("en-IN", {
             day: "2-digit",
@@ -1132,16 +1580,59 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           },
         };
 
+        console.info("[ORDER SAVED]", {
+          orderId: upgradedOrder.id,
+          paymentId: upgradedOrder.payment.id,
+          schema: upgradedOrder.backend.schema,
+          db_saved: upgradedOrder.db_saved,
+          admin_email_sent: upgradedOrder.admin_email_sent,
+          customer_email_sent: upgradedOrder.customer_email_sent,
+        });
+        console.log("[STEP 4] Order inserted into Supabase");
+
         return { ok: true, order: upgradedOrder };
       }
+      console.error("[SUPABASE INSERT FAILED]", {
+        table: "orders",
+        orderId: basePayload.order_id,
+        paymentId: basePayload.payment_id,
+        details: v2Insert.details || v2Insert.error || null,
+      });
+      await logCheckoutDebug({
+        step: "orders_direct_insert_failed",
+        payload: { paymentId: basePayload.payment_id, orderId: basePayload.order_id },
+        error: v2Insert.details || v2Insert.error || "orders insert failed",
+      });
     } catch (error) {
       console.warn("[Supabase] v2 orders insert threw", error);
+      console.error("[SUPABASE INSERT FAILED]", {
+        table: "orders",
+        orderId: orderDraft.id,
+        paymentId,
+        error: toSafeMessage(error),
+        details: toSupabaseErrorDetails(error),
+      });
+      await logCheckoutDebug({
+        step: "orders_direct_insert_threw",
+        payload: { paymentId, orderId: orderDraft.id },
+        error,
+      });
     }
 
     // Do not attempt older schema variants here.
     // Production checkout should use either:
     // - RPC `place_order_cart` (preferred), or
     // - direct insert into v2 `orders` table (fallback).
+    console.error("[SUPABASE INSERT FAILED]", {
+      orderId: orderDraft.id,
+      paymentId,
+      reason: "No Supabase order save strategy succeeded.",
+    });
+    await logCheckoutDebug({
+      step: "save_order_all_strategies_failed",
+      payload: { paymentId, orderId: orderDraft.id },
+      error: "No Supabase order save strategy succeeded.",
+    });
     return {
       ok: false,
       error:
@@ -1150,6 +1641,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
     };
   } catch (error) {
     console.warn("[Supabase] saveOrderAfterPayment threw", error);
+    await logCheckoutDebug({
+      step: "save_order_unexpected_error",
+      payload: { paymentId, orderId: orderDraft && orderDraft.id },
+      error,
+    });
     return { ok: false, error: toSafeMessage(error), code: "unexpected_error", debug: { stage: "catch", error } };
   }
 }
@@ -1168,9 +1664,10 @@ async function listOrdersForCustomer({ email, phone, limit = 20 }) {
   }
 
   try {
+    const orderTable = getOrderSourceTable();
     const buildQuery = (selectColumns) => {
       let orderQuery = client
-        .from("orders")
+        .from(orderTable)
         .select(selectColumns)
         .order("created_at", { ascending: false })
         .limit(Math.min(50, Math.max(1, Number(limit) || 20)));
@@ -1226,8 +1723,9 @@ async function listOrdersForCurrentUser({ limit = 50 } = {}) {
   await claimCustomerOrdersForCurrentUser();
 
   try {
+    const orderTable = getOrderSourceTable();
     const buildQuery = (selectColumns) => getClient()
-      .from("orders")
+      .from(orderTable)
       .select(selectColumns)
       .eq("user_id", account.user.id)
       .order("created_at", { ascending: false })
@@ -1269,10 +1767,11 @@ async function fetchOrderByOrderId(orderId) {
   }
 
   const client = getClient();
+  const orderTable = getOrderSourceTable();
 
   try {
     let { data: row, error } = await client
-      .from("orders")
+      .from(orderTable)
       .select("id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, total_amount, products, shipping_address, payment_status, order_status")
       .eq("order_id", safeOrderId)
       .maybeSingle();
@@ -1280,7 +1779,7 @@ async function fetchOrderByOrderId(orderId) {
     if (error && (error.code === "42703" || error.code === "PGRST204")) {
       console.info("[Supabase] Retrying order lookup with compact live schema", toSupabaseErrorDetails(error));
       const compactResult = await client
-        .from("orders")
+        .from(orderTable)
         .select("id, created_at, order_id, customer_name, customer_email, phone, products, total_amount, shipping_address, payment_status, order_status")
         .eq("order_id", safeOrderId)
         .maybeSingle();
@@ -1317,6 +1816,7 @@ window.AaruniSupabaseBackend = {
   updatePassword,
   upsertCustomerProfile,
   claimCustomerOrdersForCurrentUser,
+  logCheckoutDebug,
   saveOrderAfterPayment,
   sendOrderNotificationEmail,
   listOrdersForCustomer,

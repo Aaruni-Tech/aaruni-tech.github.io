@@ -54,6 +54,41 @@ a {
   text-decoration: none;
 }
 
+.test-mode-banner {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 0.55rem 1rem;
+  background: #111827;
+  color: #ffffff;
+  text-align: center;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.test-mode-banner[hidden] {
+  display: none;
+}
+
+.test-mode-banner strong {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: #f7c948;
+  color: #111827;
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+}
+
+.test-mode-banner span {
+  line-height: 1.3;
+}
+
 .sr-only {
   position: absolute;
   width: 1px;
@@ -156,6 +191,26 @@ a {
   justify-content: flex-end;
   flex-wrap: wrap;
   gap: 16px;
+}
+
+.environment-badge {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 12px;
+  border-radius: 999px;
+  background: #f7c948;
+  color: #111827;
+  font-size: 0.78rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  white-space: nowrap;
+}
+
+.environment-badge[data-mode="production"] {
+  background: #12b76a;
+  color: #052e1a;
 }
 
 .action-button,
@@ -1372,6 +1427,42 @@ body.cart-open .cart-drawer {
   font-size: 1.1rem;
 }
 
+.cart-fees {
+  display: grid;
+  gap: 8px;
+  padding: 12px 0 0;
+  border-top: 1px solid #e4e8ee;
+}
+
+.cart-fees div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--muted);
+  font-size: 0.95rem;
+  font-weight: 750;
+}
+
+.checkout-mode-note {
+  margin: 0 0 12px;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  background: #fffaeb;
+  color: #b54708;
+  font-size: 0.82rem;
+  font-weight: 950;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.checkout-mode-note[hidden] {
+  display: none;
+}
+
 .drawer-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -2458,6 +2549,12 @@ body.cart-open .cart-drawer {
 }
 
 @media (max-width: 720px) {
+  .test-mode-banner {
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.82rem;
+  }
+
   .announcement-bar {
     min-height: 44px;
     font-size: 0.84rem;

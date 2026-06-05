@@ -15,12 +15,9 @@
   //
   // Never add Razorpay key_secret, Supabase service_role key, Resend API key,
   // webhook secrets, or any other private server credential to this repository.
-  // Supabase DEV project: existing linked project, reused because the Supabase org
-  // is at its active free-project limit.
-  const DEVELOPMENT_SUPABASE_URL = "https://cnsmgxgkxgbeumnvidpk.supabase.co";
-  const DEVELOPMENT_SUPABASE_ANON_KEY = "sb_publishable_pUKXR4zuaQSg9UA5t5Oz9Q_sR4mCiI0";
-
-  // Supabase PROD project: aaruni-tech-prod.
+  // Supabase PROD project: aaruni-tech-prod. Both TEST and LIVE runtime modes
+  // use this project; mode controls whether checkout writes to test_orders or
+  // orders and which Razorpay key_id is exposed.
   const PRODUCTION_SUPABASE_URL = "https://fxoofgnhbvquenbfhdec.supabase.co";
   const PRODUCTION_SUPABASE_ANON_KEY = "sb_publishable_ZwgcNuKjDP3wjLbk2PpQ5w_sCoWwNN2";
 
@@ -150,9 +147,10 @@
       label: "TEST MODE",
       isProduction: false,
       supabase: {
-        // Supabase DEV project public URL and anon/publishable key.
-        url: DEVELOPMENT_SUPABASE_URL,
-        anonKey: DEVELOPMENT_SUPABASE_ANON_KEY,
+        // Use the production Supabase project in TEST mode so admin settings,
+        // email logs, and test_orders live beside the protected production data.
+        url: PRODUCTION_SUPABASE_URL,
+        anonKey: PRODUCTION_SUPABASE_ANON_KEY,
       },
       razorpay: {
         // Razorpay test key_id only. Do not put key_secret in frontend code.
@@ -266,12 +264,8 @@
       throw new Error("[Config] Refusing production mode with test products.");
     }
 
-    if (!config.isProduction && !supabaseUrl.includes("cnsmgxgkxgbeumnvidpk.supabase.co")) {
-      throw new Error("[Config] Refusing development mode with a non-TEST Supabase URL.");
-    }
-
-    if (config.isProduction && !supabaseUrl.includes("fxoofgnhbvquenbfhdec.supabase.co")) {
-      throw new Error("[Config] Refusing production mode with a non-PROD Supabase URL.");
+    if (!supabaseUrl.includes("fxoofgnhbvquenbfhdec.supabase.co")) {
+      throw new Error("[Config] Refusing to run against a non-production Supabase project.");
     }
 
     if (/service[_-]?role|sb_secret_/i.test(anonKey)) {

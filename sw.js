@@ -1,4 +1,4 @@
-const APP_VERSION = "2026.05.22.3";
+const APP_VERSION = "2026.06.05.1";
 const CACHE_NAME = `aaruni-tech-${APP_VERSION}`;
 
 const APP_SHELL = [
@@ -6,6 +6,10 @@ const APP_SHELL = [
   "/index.html",
   "/track-order.html",
   "/my-orders.html",
+  "/admin/",
+  "/admin/index.html",
+  "/admin/admin.css",
+  "/admin/admin.js",
   "/about-us.html",
   "/contact-us.html",
   "/privacy-policy.html",
@@ -16,6 +20,7 @@ const APP_SHELL = [
   "/aaruni-config.js",
   "/script.js",
   "/order.js",
+  "/environment-badge.js",
   "/email.js",
   "/my-orders.js",
   "/emailjs-config.js",

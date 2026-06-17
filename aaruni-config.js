@@ -1,10 +1,9 @@
 (function () {
   "use strict";
 
-  // Single environment switch for Aaruni Tech.
-  // Use "development" for test orders/payments.
-  // Use "production" for real customer orders/live payments.
-  const ENV = "development";
+  // Safe fallback mode. Runtime mode is loaded from Supabase app_settings
+  // through the public-config Edge Function when available.
+  const ENV = "test";
 
   const SUPPORT_EMAIL = "tech.aaruni@gmail.com";
 
@@ -16,12 +15,9 @@
   //
   // Never add Razorpay key_secret, Supabase service_role key, Resend API key,
   // webhook secrets, or any other private server credential to this repository.
-  // Supabase DEV project: existing linked project, reused because the Supabase org
-  // is at its active free-project limit.
-  const DEVELOPMENT_SUPABASE_URL = "https://cnsmgxgkxgbeumnvidpk.supabase.co";
-  const DEVELOPMENT_SUPABASE_ANON_KEY = "sb_publishable_pUKXR4zuaQSg9UA5t5Oz9Q_sR4mCiI0";
-
-  // Supabase PROD project: aaruni-tech-prod.
+  // Supabase PROD project: aaruni-tech-prod. Both TEST and LIVE runtime modes
+  // use this project; mode controls whether checkout writes to test_orders or
+  // orders and which Razorpay key_id is exposed.
   const PRODUCTION_SUPABASE_URL = "https://fxoofgnhbvquenbfhdec.supabase.co";
   const PRODUCTION_SUPABASE_ANON_KEY = "sb_publishable_ZwgcNuKjDP3wjLbk2PpQ5w_sCoWwNN2";
 
@@ -139,20 +135,22 @@
   const DEVELOPMENT_PRICES = [100, 150, 50, 75, 250, 25, 20, 35, 30, 25, 20, 15];
   const DEVELOPMENT_PRODUCTS = PRODUCTION_PRODUCTS.map((product, index) => ({
     ...product,
+    isTestProduct: true,
     name: `Test ${product.name}`,
     price: DEVELOPMENT_PRICES[index] || 10,
     description: `Development test product. ${product.description}`,
   }));
 
   const ENVIRONMENTS = {
-    development: {
-      mode: "development",
-      label: "Development",
+    test: {
+      mode: "test",
+      label: "TEST MODE",
       isProduction: false,
       supabase: {
-        // Supabase DEV project public URL and anon/publishable key.
-        url: DEVELOPMENT_SUPABASE_URL,
-        anonKey: DEVELOPMENT_SUPABASE_ANON_KEY,
+        // Use the production Supabase project in TEST mode so admin settings,
+        // email logs, and test_orders live beside the protected production data.
+        url: PRODUCTION_SUPABASE_URL,
+        anonKey: PRODUCTION_SUPABASE_ANON_KEY,
       },
       razorpay: {
         // Razorpay test key_id only. Do not put key_secret in frontend code.
@@ -161,20 +159,28 @@
         supportEmail: SUPPORT_EMAIL,
       },
       email: {
-        // Development uses EmailJS testing templates instead of real order emails.
-        provider: "emailjs",
-        publicKey: "YOUR_EMAILJS_PUBLIC_KEY",
-        serviceId: "YOUR_EMAILJS_SERVICE_ID",
-        buyerTemplateId: "YOUR_EMAILJS_TESTING_TEMPLATE_ID",
-        sellerTemplateId: "YOUR_EMAILJS_TESTING_TEMPLATE_ID",
+        // TEST/development uses the same Edge Function path as production so
+        // order status fields, Resend retries, and idempotency are validated.
+        provider: "supabase-edge-function",
+        publicKey: "",
+        serviceId: "",
+        buyerTemplateId: "",
+        sellerTemplateId: "",
         sellerEmail: SUPPORT_EMAIL,
-        orderNotificationFunctionName: "",
+        orderNotificationFunctionName: "send-order-notification",
+      },
+      settings: {
+        shippingFee: 0,
+        gst: {
+          enabled: false,
+          percent: 0,
+        },
       },
       products: DEVELOPMENT_PRODUCTS,
     },
     production: {
       mode: "production",
-      label: "Production",
+      label: "LIVE MODE",
       isProduction: true,
       supabase: {
         // Supabase PROD project public URL and anon/publishable key.
@@ -182,9 +188,9 @@
         anonKey: PRODUCTION_SUPABASE_ANON_KEY,
       },
       razorpay: {
-        // Replace with the Razorpay live key_id before enabling production.
+        // Loaded at runtime from Supabase app_settings/public-config.
         // Do not put the Razorpay key_secret in this repository.
-        keyId: "rzp_live_REPLACE_WITH_PUBLIC_KEY_ID",
+        keyId: "",
         businessName: "Aaruni Tech",
         supportEmail: SUPPORT_EMAIL,
       },
@@ -198,13 +204,99 @@
         sellerEmail: SUPPORT_EMAIL,
         orderNotificationFunctionName: "send-order-notification",
       },
+      settings: {
+        shippingFee: 0,
+        gst: {
+          enabled: false,
+          percent: 0,
+        },
+      },
       products: PRODUCTION_PRODUCTS,
     },
   };
 
-  const activeConfig = ENVIRONMENTS[ENV] || ENVIRONMENTS.development;
+  function normalizeEnvironment(value) {
+    const raw = String(value || "").trim().toLowerCase();
 
-  if (!ENVIRONMENTS[ENV]) {
+    if (raw === "dev" || raw === "development" || raw === "test" || raw === "testing") {
+      return "test";
+    }
+
+    if (raw === "prod" || raw === "live") {
+      return "production";
+    }
+
+    return ENVIRONMENTS[raw] ? raw : "";
+  }
+
+  function getProductsForEnvironment(config) {
+    const environmentProducts = Array.isArray(config.products) ? config.products : [];
+
+    if (!config.isProduction) {
+      return environmentProducts.map((product) => ({ ...product }));
+    }
+
+    return environmentProducts
+      .filter((product) => !product.isTestProduct && !/^test\s+/i.test(String(product.name || "")))
+      .map((product) => ({ ...product, isTestProduct: false }));
+  }
+
+  function hasTestProductMarker(products) {
+    return (Array.isArray(products) ? products : []).some(
+      (product) => product.isTestProduct || /^test\s+/i.test(String(product.name || ""))
+    );
+  }
+
+  function assertSafePublicConfig(config, rawProducts) {
+    const keyId = String(config.razorpay && config.razorpay.keyId ? config.razorpay.keyId : "").trim();
+    const supabaseUrl = String(config.supabase && config.supabase.url ? config.supabase.url : "").trim();
+    const anonKey = String(config.supabase && config.supabase.anonKey ? config.supabase.anonKey : "").trim();
+
+    if (config.isProduction && keyId.startsWith("rzp_test_")) {
+      throw new Error("[Config] Refusing production mode with a Razorpay test key_id.");
+    }
+
+    if (!config.isProduction && keyId.startsWith("rzp_live_")) {
+      throw new Error("[Config] Refusing development mode with a Razorpay live key_id.");
+    }
+
+    if (config.isProduction && hasTestProductMarker(rawProducts)) {
+      throw new Error("[Config] Refusing production mode with test products.");
+    }
+
+    if (!supabaseUrl.includes("fxoofgnhbvquenbfhdec.supabase.co")) {
+      throw new Error("[Config] Refusing to run against a non-production Supabase project.");
+    }
+
+    if (/service[_-]?role|sb_secret_/i.test(anonKey)) {
+      throw new Error("[Config] Refusing to expose a Supabase service role/secret key in browser config.");
+    }
+  }
+
+  const requestedEnv = normalizeEnvironment(ENV);
+  const selectedEnv = requestedEnv || "test";
+  const environmentConfig = ENVIRONMENTS[selectedEnv] || ENVIRONMENTS.test;
+  const activeConfig = {
+    ...environmentConfig,
+    supabase: { ...environmentConfig.supabase },
+    razorpay: { ...environmentConfig.razorpay },
+    email: { ...environmentConfig.email },
+    settings: {
+      ...environmentConfig.settings,
+      gst: { ...(environmentConfig.settings && environmentConfig.settings.gst ? environmentConfig.settings.gst : {}) },
+    },
+  };
+
+  activeConfig.products = getProductsForEnvironment(activeConfig);
+  activeConfig.launchSafety = {
+    realPaymentsActive: Boolean(activeConfig.isProduction),
+    testModeBadge: !activeConfig.isProduction,
+    sourceOfTruth: "Supabase app_settings via public-config with aaruni-config fallback",
+  };
+
+  assertSafePublicConfig(activeConfig, environmentConfig.products);
+
+  if (!requestedEnv) {
     console.warn(`[Config] Unknown ENV "${ENV}". Falling back to development mode.`);
   }
 
@@ -213,6 +305,22 @@
   window.AARUNI_CONFIG = activeConfig;
   window.AARUNI_ENVIRONMENT = activeConfig.mode;
   window.AARUNI_PRODUCTS = activeConfig.products;
+  window.AARUNI_ENVIRONMENTS = Object.fromEntries(
+    Object.entries(ENVIRONMENTS).map(([key, value]) => [
+      key,
+      {
+        ...value,
+        supabase: { ...value.supabase },
+        razorpay: { ...value.razorpay },
+        email: { ...value.email },
+        settings: {
+          ...value.settings,
+          gst: { ...(value.settings && value.settings.gst ? value.settings.gst : {}) },
+        },
+        products: getProductsForEnvironment(value),
+      },
+    ])
+  );
 
   // Backwards-compatible globals used by existing page scripts.
   window.SUPABASE_URL = activeConfig.supabase.url;

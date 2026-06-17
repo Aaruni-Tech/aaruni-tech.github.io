@@ -2,13 +2,16 @@ import { createClient } from "https://cdn.jsdelivr.net/npm/@supabase/supabase-js
 
 let supabaseClient = null;
 
-const ORDER_STATUSES = ["Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered"];
+const ORDER_STATUSES = ["Processing", "Order Confirmed", "Packed", "Shipped", "Out for Delivery", "Delivered", "Cancelled"];
 const ORDER_EMAIL_FUNCTION_NAME =
   (window.AARUNI_CONFIG &&
     window.AARUNI_CONFIG.email &&
     window.AARUNI_CONFIG.email.orderNotificationFunctionName) ||
   "send-order-notification";
 const ORDER_EMAIL_STORAGE_PREFIX = "aaruniOrderEmailNotification:";
+const ORDER_EMAIL_INVOKE_MAX_ATTEMPTS = 3;
+const ORDER_EMAIL_RETRY_DELAY_MS = 1200;
+const CUSTOMER_PROFILE_TABLE = "customer_profiles";
 
 console.log("[Supabase] Backend init", {
   url: window.SUPABASE_URL,
@@ -27,6 +30,20 @@ function isConfigured() {
   return Boolean(
     url && anonKey
   );
+}
+
+function normalizeRuntimeMode(value) {
+  const raw = String(value || "").trim().toLowerCase();
+  return raw === "production" || raw === "prod" || raw === "live" ? "production" : "test";
+}
+
+function getRuntimeMode() {
+  const config = window.AARUNI_CONFIG || {};
+  return normalizeRuntimeMode(config.isProduction ? "production" : config.mode || window.AARUNI_ENVIRONMENT || "test");
+}
+
+function getOrderSourceTable() {
+  return getRuntimeMode() === "test" ? "test_orders" : "orders";
 }
 
 function maskValue(value) {
@@ -48,9 +65,10 @@ function getClient() {
     try {
       supabaseClient = createClient(url, anonKey, {
         auth: {
-          persistSession: false,
-          autoRefreshToken: false,
-          detectSessionInUrl: false,
+          persistSession: true,
+          autoRefreshToken: true,
+          detectSessionInUrl: true,
+          flowType: "pkce",
         },
       });
     } catch (err) {
@@ -60,6 +78,329 @@ function getClient() {
   }
 
   return supabaseClient;
+}
+
+function getOrderEmailFunctionUrl() {
+  const { url } = getSupabaseConfig();
+
+  if (!url || !ORDER_EMAIL_FUNCTION_NAME) {
+    return "";
+  }
+
+  return `${url.replace(/\/+$/, "")}/functions/v1/${ORDER_EMAIL_FUNCTION_NAME}`;
+}
+
+function getAuthRedirectUrl(mode) {
+  const url = new URL("index.html", window.location.href);
+  url.searchParams.set("open_account", "1");
+  if (mode) {
+    url.searchParams.set("mode", mode);
+  }
+  return url.toString();
+}
+
+function getAddressFromParts(profile) {
+  return [
+    profile.houseNumber,
+    profile.village,
+    profile.mandal,
+    profile.area,
+    profile.district,
+    profile.state,
+  ].filter(Boolean).join(", ");
+}
+
+function getAddressPartsObject(profile) {
+  return {
+    state: String(profile.state || "").trim(),
+    area: String(profile.area || "").trim(),
+    district: String(profile.district || "").trim(),
+    mandal: String(profile.mandal || "").trim(),
+    village: String(profile.village || "").trim(),
+    houseNumber: String(profile.houseNumber || profile.house_number || "").trim(),
+  };
+}
+
+function normalizeCustomerProfile(input = {}, user = null) {
+  const metadata = (user && user.user_metadata) || {};
+  const addressParts = {
+    ...getAddressPartsObject(metadata),
+    ...getAddressPartsObject(input),
+  };
+  const address =
+    String(input.address || input.shipping_address || metadata.address || metadata.shipping_address || "").trim() ||
+    getAddressFromParts(addressParts);
+  const email = String(input.email || (user && user.email) || metadata.email || "").trim();
+  const fullName = String(input.full_name || input.fullName || input.name || metadata.full_name || metadata.name || "").trim();
+
+  return {
+    id: String(input.id || (user && user.id) || "").trim(),
+    full_name: fullName || (email ? email.split("@")[0] : "Customer"),
+    name: fullName || (email ? email.split("@")[0] : "Customer"),
+    email,
+    phone: String(input.phone || metadata.phone || "").trim(),
+    address,
+    shipping_address: address,
+    state: addressParts.state,
+    area: addressParts.area,
+    district: addressParts.district,
+    mandal: addressParts.mandal,
+    village: addressParts.village,
+    houseNumber: addressParts.houseNumber,
+    address_parts: addressParts,
+    created_at: input.created_at || "",
+  };
+}
+
+function customerProfileToPayload(profile, user) {
+  const normalized = normalizeCustomerProfile(profile, user);
+
+  return {
+    id: user.id,
+    full_name: normalized.full_name,
+    email: normalized.email || user.email || "",
+    phone: normalized.phone || null,
+    address: normalized.address || "",
+    address_parts: normalized.address_parts || {},
+  };
+}
+
+async function getAuthSession() {
+  if (!isConfigured()) {
+    return { ok: false, session: null, user: null, reason: "Supabase is not configured." };
+  }
+
+  const client = getClient();
+  const { data, error } = await client.auth.getSession();
+
+  if (error) {
+    return { ok: false, session: null, user: null, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true, session: data.session || null, user: data.session ? data.session.user : null };
+}
+
+async function fetchCustomerProfile(user) {
+  if (!user) {
+    return { ok: false, profile: null, reason: "Missing authenticated user." };
+  }
+
+  const client = getClient();
+  const { data, error } = await client
+    .from(CUSTOMER_PROFILE_TABLE)
+    .select("id, full_name, email, phone, address, address_parts, created_at")
+    .eq("id", user.id)
+    .maybeSingle();
+
+  if (error) {
+    console.warn("[Auth] Customer profile lookup failed", toSupabaseErrorDetails(error));
+    return {
+      ok: false,
+      profile: normalizeCustomerProfile({}, user),
+      error: toSafeMessage(error),
+      details: toSupabaseErrorDetails(error),
+    };
+  }
+
+  return { ok: true, profile: normalizeCustomerProfile(data || {}, user) };
+}
+
+async function upsertCustomerProfile(profileInput = {}) {
+  const sessionResult = await getAuthSession();
+
+  if (!sessionResult.ok || !sessionResult.user) {
+    return { ok: false, error: sessionResult.error || "You must be logged in to save account details." };
+  }
+
+  const client = getClient();
+  const payload = customerProfileToPayload(profileInput, sessionResult.user);
+  const { data, error } = await client
+    .from(CUSTOMER_PROFILE_TABLE)
+    .upsert(payload, { onConflict: "id" })
+    .select("id, full_name, email, phone, address, address_parts, created_at")
+    .maybeSingle();
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true, profile: normalizeCustomerProfile(data || payload, sessionResult.user) };
+}
+
+async function getCurrentAccount() {
+  const sessionResult = await getAuthSession();
+
+  if (!sessionResult.ok || !sessionResult.user) {
+    return {
+      ok: sessionResult.ok,
+      session: sessionResult.session || null,
+      user: null,
+      profile: null,
+      error: sessionResult.error || "",
+      reason: sessionResult.reason || "not_authenticated",
+    };
+  }
+
+  const profileResult = await fetchCustomerProfile(sessionResult.user);
+
+  return {
+    ok: true,
+    session: sessionResult.session,
+    user: sessionResult.user,
+    profile: profileResult.profile || normalizeCustomerProfile({}, sessionResult.user),
+    profileStatus: profileResult.ok ? "loaded" : "fallback",
+    profileError: profileResult.error || "",
+  };
+}
+
+async function claimCustomerOrdersForCurrentUser() {
+  const sessionResult = await getAuthSession();
+
+  if (!sessionResult.ok || !sessionResult.user) {
+    return { ok: false, claimed: 0, reason: "not_authenticated" };
+  }
+
+  try {
+    const { data, error } = await getClient().rpc("claim_customer_orders_for_current_user");
+
+    if (error) {
+      console.info("[Auth] Order claim RPC unavailable or failed", toSupabaseErrorDetails(error));
+      return { ok: false, claimed: 0, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+    }
+
+    return { ok: true, claimed: Number(data || 0) };
+  } catch (error) {
+    return { ok: false, claimed: 0, error: toSafeMessage(error) };
+  }
+}
+
+async function signUpCustomer({ fullName, email, password, phone, address, addressParts }) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const profile = normalizeCustomerProfile({
+    full_name: fullName,
+    email,
+    phone,
+    address,
+    ...(addressParts || {}),
+  });
+
+  const { data, error } = await getClient().auth.signUp({
+    email: profile.email,
+    password,
+    options: {
+      emailRedirectTo: getAuthRedirectUrl("login"),
+      data: {
+        full_name: profile.full_name,
+        phone: profile.phone,
+        address: profile.address,
+      },
+    },
+  });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  if (data.session && data.user) {
+    const savedProfile = await upsertCustomerProfile(profile);
+    await claimCustomerOrdersForCurrentUser();
+
+    return {
+      ok: true,
+      session: data.session,
+      user: data.user,
+      profile: savedProfile.profile || profile,
+      requiresEmailConfirmation: false,
+    };
+  }
+
+  return {
+    ok: true,
+    session: data.session || null,
+    user: data.user || null,
+    profile,
+    requiresEmailConfirmation: true,
+  };
+}
+
+async function signInCustomer({ email, password }) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { data, error } = await getClient().auth.signInWithPassword({
+    email: String(email || "").trim(),
+    password,
+  });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  const account = await getCurrentAccount();
+  await claimCustomerOrdersForCurrentUser();
+
+  return {
+    ok: true,
+    session: data.session,
+    user: data.user,
+    profile: account.profile,
+  };
+}
+
+async function signOutCustomer() {
+  if (!isConfigured()) {
+    return { ok: true };
+  }
+
+  const { error } = await getClient().auth.signOut();
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true };
+}
+
+async function sendPasswordReset(email) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { error } = await getClient().auth.resetPasswordForEmail(String(email || "").trim(), {
+    redirectTo: getAuthRedirectUrl("reset"),
+  });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true };
+}
+
+async function updatePassword(password) {
+  if (!isConfigured()) {
+    return { ok: false, error: "Supabase is not configured." };
+  }
+
+  const { data, error } = await getClient().auth.updateUser({ password });
+
+  if (error) {
+    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+  }
+
+  return { ok: true, user: data.user || null };
+}
+
+function onAuthStateChange(callback) {
+  if (!isConfigured()) {
+    return { data: { subscription: { unsubscribe() {} } } };
+  }
+
+  return getClient().auth.onAuthStateChange(callback);
 }
 
 function toSafeMessage(error) {
@@ -88,12 +429,76 @@ function toSupabaseErrorDetails(error) {
   }
 
   return {
+    status: error.status || (error.context && error.context.status) || "",
+    statusText: error.statusText || (error.context && error.context.statusText) || "",
     message: toSafeMessage(error),
     code: error.code || "",
     details: error.details || "",
     hint: error.hint || "",
     raw: error,
   };
+}
+
+function toDebugError(error) {
+  const details = toSupabaseErrorDetails(error);
+
+  if (!details) {
+    return null;
+  }
+
+  return {
+    status: details.status || "",
+    statusText: details.statusText || "",
+    code: details.code || "",
+    message: details.message || "",
+    details: details.details || "",
+    hint: details.hint || "",
+  };
+}
+
+function toJsonSafe(value) {
+  if (value === undefined) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(JSON.stringify(value));
+  } catch (error) {
+    return { value: String(value) };
+  }
+}
+
+async function logCheckoutDebug({ step, payload, error }) {
+  if (!isConfigured()) {
+    return { ok: false, skipped: true, reason: "Supabase is not configured." };
+  }
+
+  const debugRow = {
+    step: String(step || "unknown").slice(0, 200),
+    payload: toJsonSafe(payload) || {},
+    error: toDebugError(error) || toJsonSafe(error) || null,
+  };
+
+  try {
+    console.info("[CheckoutDebug] Writing checkout_debug_logs", debugRow);
+    const { error: insertError, status, statusText } = await getClient()
+      .from("checkout_debug_logs")
+      .insert(debugRow);
+
+    if (insertError) {
+      console.warn("[CheckoutDebug] checkout_debug_logs insert failed", {
+        status,
+        statusText,
+        error: toDebugError({ ...insertError, status, statusText }),
+      });
+      return { ok: false, error: toSafeMessage(insertError), details: toDebugError({ ...insertError, status, statusText }) };
+    }
+
+    return { ok: true };
+  } catch (debugError) {
+    console.warn("[CheckoutDebug] checkout_debug_logs insert threw", toDebugError(debugError));
+    return { ok: false, error: toSafeMessage(debugError), details: toDebugError(debugError) };
+  }
 }
 
 function isMissingColumnError(errorDetails, columnName) {
@@ -115,24 +520,40 @@ function isMissingFunctionError(errorDetails, fnName) {
 }
 
 async function insertWithFallback({ client, table, payloads, select }) {
+  let lastError = null;
+
   for (let index = 0; index < payloads.length; index += 1) {
     const payload = payloads[index];
     try {
+      console.info("[Supabase] Insert attempt", {
+        table,
+        variant: index + 1,
+        variants: payloads.length,
+        columns: Object.keys(payload),
+      });
       const query = client.from(table).insert(payload);
-      const { data, error } = select ? await query.select(select).single() : await query;
+      const response = select ? await query.select(select).single() : await query;
+      const { data, error, status, statusText } = response;
 
       if (!error) {
         return { ok: true, data, usedIndex: index };
       }
 
-      const details = toSupabaseErrorDetails(error);
+      const details = toSupabaseErrorDetails({ ...error, status, statusText });
+      lastError = details;
       console.warn(`[Supabase] Insert into ${table} failed (variant ${index + 1}/${payloads.length})`, details);
     } catch (error) {
+      lastError = toSupabaseErrorDetails(error);
       console.warn(`[Supabase] Insert into ${table} threw (variant ${index + 1}/${payloads.length})`, error);
     }
   }
 
-  return { ok: false };
+  console.error("[SUPABASE INSERT FAILED]", {
+    table,
+    variants: payloads.length,
+    lastError,
+  });
+  return { ok: false, error: toSafeMessage(lastError), details: lastError };
 }
 
 function normalizeStatus(value) {
@@ -145,6 +566,20 @@ function normalizeStatus(value) {
   // Backwards-compat: older local-only statuses.
   if (raw === "Confirmed") {
     return "Order Confirmed";
+  }
+
+  const lower = raw.toLowerCase();
+  if (lower === "pending" || lower === "processing") {
+    return "Processing";
+  }
+  if (lower === "shipped") {
+    return "Shipped";
+  }
+  if (lower === "delivered") {
+    return "Delivered";
+  }
+  if (lower === "cancelled" || lower === "canceled") {
+    return "Cancelled";
   }
 
   if (ORDER_STATUSES.includes(raw)) {
@@ -365,6 +800,12 @@ function getOrderEmailNotificationKey(order) {
   return orderId && paymentId ? `${orderId}:${paymentId}` : "";
 }
 
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
 function hasStoredOrderEmailNotification(key) {
   if (!key) return false;
 
@@ -416,6 +857,13 @@ function buildOrderNotificationPayload(order) {
         id: getOrderPaymentId(order),
         status: String((order && order.payment && order.payment.status) || order.payment_status || "Paid").trim(),
       },
+      environment: {
+        mode: normalizeRuntimeMode(
+          (order && order.environment && order.environment.mode) ||
+            order.environment_mode ||
+            (order && order.payment && order.payment.mode === "test" ? "test" : "production")
+        ),
+      },
       items,
       total_quantity: Number((order && order.totalQuantity) || order.quantity || 0),
       total_amount: Number((order && order.totalAmount) || order.total_amount || order.total_price || 0),
@@ -423,8 +871,32 @@ function buildOrderNotificationPayload(order) {
   };
 }
 
+function summarizeOrderNotificationPayload(payload) {
+  const order = payload && payload.order ? payload.order : {};
+  const customer = order.customer || {};
+  const payment = order.payment || {};
+  const items = Array.isArray(order.items) ? order.items : [];
+
+  return {
+    orderId: order.id || "",
+    paymentId: payment.id || "",
+    paymentStatus: payment.status || "",
+    customerEmail: customer.email || "",
+    customerPhonePresent: Boolean(customer.phone),
+    shippingAddressPresent: Boolean(customer.shipping_address),
+    itemCount: items.length,
+    totalQuantity: order.total_quantity || 0,
+    totalAmount: order.total_amount || 0,
+  };
+}
+
 async function sendOrderNotificationEmail(order) {
   if (!isConfigured()) {
+    await logCheckoutDebug({
+      step: "email_supabase_not_configured",
+      payload: { orderId: order && order.id, paymentId: getOrderPaymentId(order) },
+      error: "Supabase is not configured.",
+    });
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
   }
 
@@ -434,62 +906,339 @@ async function sendOrderNotificationEmail(order) {
   const paymentStatus = String((order && order.payment && order.payment.status) || order.payment_status || "").toLowerCase();
 
   if (!orderId || !paymentId || paymentId === "not available") {
+    await logCheckoutDebug({
+      step: "email_missing_order_or_payment_id",
+      payload: { orderId, paymentId },
+      error: "Missing order ID or payment ID for email notification.",
+    });
     return { ok: false, skipped: true, reason: "Missing order ID or payment ID for email notification." };
   }
 
   if (paymentStatus && paymentStatus !== "paid") {
+    await logCheckoutDebug({
+      step: "email_payment_not_paid",
+      payload: { orderId, paymentId, paymentStatus },
+      error: `Payment status is ${paymentStatus}.`,
+    });
     return { ok: false, skipped: true, reason: `Payment status is ${paymentStatus}.` };
   }
 
   if (hasStoredOrderEmailNotification(notificationKey)) {
-    return { ok: true, skipped: true, duplicate: true, reason: "Order notification already sent from this browser." };
+    return {
+      ok: true,
+      complete: true,
+      skipped: true,
+      duplicate: true,
+      adminEmailSent: true,
+      customerEmailSent: true,
+      reason: "Order notification already sent from this browser.",
+    };
   }
 
   const client = getClient();
   const payload = buildOrderNotificationPayload(order);
+  const functionUrl = getOrderEmailFunctionUrl();
 
+  console.log("[STEP 5] Triggering email function");
   console.info("[OrderEmail] Invoking send-order-notification", {
     orderId,
     paymentId,
     functionName: ORDER_EMAIL_FUNCTION_NAME,
+    functionUrl,
+    payload: summarizeOrderNotificationPayload(payload),
   });
 
-  try {
-    const { data, error } = await client.functions.invoke(ORDER_EMAIL_FUNCTION_NAME, {
-      body: payload,
+  let lastFailure = null;
+
+  for (let attempt = 1; attempt <= ORDER_EMAIL_INVOKE_MAX_ATTEMPTS; attempt += 1) {
+    console.info("[Edge Function invoke]", {
+      orderId,
+      paymentId,
+      functionName: ORDER_EMAIL_FUNCTION_NAME,
+      functionUrl,
+      attempt,
+      maxAttempts: ORDER_EMAIL_INVOKE_MAX_ATTEMPTS,
     });
 
-    if (error) {
-      const status = error && error.context && error.context.status ? Number(error.context.status) : 0;
-      const details = toSupabaseErrorDetails(error);
+    try {
+      const { data, error } = await client.functions.invoke(ORDER_EMAIL_FUNCTION_NAME, {
+        body: payload,
+      });
 
-      if (status === 404) {
-        return {
-          ok: false,
-          skipped: true,
-          reason: "Order email Edge Function is not deployed.",
+      if (error) {
+        const status = error && error.context && error.context.status ? Number(error.context.status) : 0;
+        const details = toSupabaseErrorDetails(error);
+        lastFailure = { ok: false, error: toSafeMessage(error), details, status };
+
+        console.error("[OrderEmail] send-order-notification returned error", {
+          orderId,
+          paymentId,
+          functionName: ORDER_EMAIL_FUNCTION_NAME,
+          functionUrl,
+          attempt,
+          status,
           details,
-        };
+        });
+        console.error("[EMAIL FAILED]", {
+          orderId,
+          paymentId,
+          stage: "edge_function_invoke",
+          attempt,
+          status,
+          details,
+        });
+        await logCheckoutDebug({
+          step: "edge_function_invoke_failed",
+          payload: { orderId, paymentId, functionName: ORDER_EMAIL_FUNCTION_NAME, functionUrl, attempt, status },
+          error: { ...details, status },
+        });
+
+        if (status === 404) {
+          return {
+            ok: false,
+            skipped: true,
+            reason: "Order email Edge Function is not deployed.",
+            details,
+          };
+        }
+
+        if (attempt < ORDER_EMAIL_INVOKE_MAX_ATTEMPTS) {
+          await delay(ORDER_EMAIL_RETRY_DELAY_MS * attempt);
+          continue;
+        }
+
+        return lastFailure;
       }
 
-      return { ok: false, error: toSafeMessage(error), details };
-    }
+      console.info("[OrderEmail] send-order-notification response", {
+        orderId,
+        paymentId,
+        functionName: ORDER_EMAIL_FUNCTION_NAME,
+        attempt,
+        data,
+      });
 
-    if (data && (data.ok || data.duplicate) && data.complete !== false) {
-      storeOrderEmailNotification(notificationKey);
-    }
+      if (data && (data.ok || data.duplicate) && data.complete !== false) {
+        if (data.adminEmailSent) {
+          console.log("[STEP 6] Admin email sent");
+        }
+        if (data.customerEmailSent) {
+          console.log("[STEP 7] Customer email sent");
+        }
+        storeOrderEmailNotification(notificationKey);
+        return data;
+      }
 
-    return data || { ok: false, error: "Empty email function response." };
-  } catch (error) {
-    return { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+      lastFailure = data || { ok: false, error: "Empty email function response." };
+      console.error("[EMAIL FAILED]", {
+        orderId,
+        paymentId,
+        stage: "edge_function_response",
+        attempt,
+        result: lastFailure,
+      });
+      await logCheckoutDebug({
+        step: "edge_function_incomplete_response",
+        payload: { orderId, paymentId, functionName: ORDER_EMAIL_FUNCTION_NAME, functionUrl, attempt },
+        error: lastFailure,
+      });
+
+      if (attempt < ORDER_EMAIL_INVOKE_MAX_ATTEMPTS) {
+        await delay(ORDER_EMAIL_RETRY_DELAY_MS * attempt);
+        continue;
+      }
+
+      return lastFailure;
+    } catch (error) {
+      lastFailure = { ok: false, error: toSafeMessage(error), details: toSupabaseErrorDetails(error) };
+      console.error("[OrderEmail] send-order-notification threw", {
+        orderId,
+        paymentId,
+        functionName: ORDER_EMAIL_FUNCTION_NAME,
+        functionUrl,
+        attempt,
+        error: toSafeMessage(error),
+        details: toSupabaseErrorDetails(error),
+      });
+      console.error("[EMAIL FAILED]", {
+        orderId,
+        paymentId,
+        stage: "edge_function_throw",
+        attempt,
+        error: toSafeMessage(error),
+      });
+      await logCheckoutDebug({
+        step: "edge_function_throw",
+        payload: { orderId, paymentId, functionName: ORDER_EMAIL_FUNCTION_NAME, functionUrl, attempt },
+        error,
+      });
+
+      if (attempt < ORDER_EMAIL_INVOKE_MAX_ATTEMPTS) {
+        await delay(ORDER_EMAIL_RETRY_DELAY_MS * attempt);
+      }
+    }
   }
+
+  return lastFailure || { ok: false, error: "Order email Edge Function failed after retries." };
+}
+
+async function saveDirectOrderToTable({ client, tableName, orderDraft, paymentId, account, buyer, createdAtIso, runtimeMode }) {
+  const items = Array.isArray(orderDraft.items) ? orderDraft.items : [];
+  const productsText = items
+    .map((item) => `${item.name || "Product"} x ${Number(item.quantity || 1)}`)
+    .filter(Boolean)
+    .join(", ");
+  const productsJson = buildProductsJsonbPayload(items);
+  const totalQty = items.reduce((sum, item) => sum + Number(item.quantity || 0), 0) || Number(orderDraft.totalQuantity || 0) || 1;
+  const gst = orderDraft.gst || {};
+  const commercePayload = {
+    environment_mode: runtimeMode,
+    shipping_fee: Number(orderDraft.shippingFee ?? orderDraft.shippingCharge ?? 0),
+    gst_enabled: Boolean(gst.enabled),
+    gst_percent: Number(gst.percent || 0),
+    gst_amount: Number(orderDraft.gstAmount ?? gst.amount ?? 0),
+  };
+  const basePayload = {
+    customer_name: buyer.name || "Customer",
+    customer_email: buyer.email || null,
+    phone: buyer.phone || null,
+    product_name: productsText || "Cart items",
+    quantity: totalQty,
+    total_price: Number(orderDraft.totalAmount || 0),
+    total_amount: Number(orderDraft.totalAmount || 0),
+    subtotal: Number(orderDraft.subtotal || orderDraft.totalAmount || 0),
+    products: productsJson,
+    cart_items: productsJson,
+    shipping_address: buyer.address || "",
+    payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
+    payment_status: paymentId ? "Paid" : "Pending",
+    order_id: orderDraft.id,
+    user_id: account.user.id,
+    db_saved: true,
+    admin_email_sent: false,
+    customer_email_sent: false,
+  };
+  const status = runtimeMode === "test" ? "Processing" : normalizeStatus(orderDraft.status || "Order Confirmed");
+  const liveSchemaPayload = {
+    user_id: basePayload.user_id,
+    customer_name: basePayload.customer_name,
+    customer_email: basePayload.customer_email,
+    phone: basePayload.phone,
+    shipping_address: basePayload.shipping_address,
+    payment_id: basePayload.payment_id,
+    payment_status: basePayload.payment_status,
+    order_status: status,
+    order_id: basePayload.order_id,
+    products: productsJson,
+    total_amount: Number(orderDraft.totalAmount || 0),
+    db_saved: true,
+    admin_email_sent: false,
+    customer_email_sent: false,
+  };
+
+  console.info("[Supabase] Trying direct order insert", {
+    tableName,
+    runtimeMode,
+    productsText,
+    totalQty,
+    totalPrice: Number(orderDraft.totalAmount || 0),
+  });
+
+  const insert = await insertWithFallback({
+    client,
+    table: tableName,
+    payloads: [
+      { ...basePayload, ...commercePayload, order_status: status, status },
+      { ...liveSchemaPayload, ...commercePayload, status },
+      { ...basePayload, order_status: status, status },
+      liveSchemaPayload,
+    ],
+  });
+
+  if (!insert.ok) {
+    console.error("[SUPABASE INSERT FAILED]", {
+      table: tableName,
+      orderId: basePayload.order_id,
+      paymentId: basePayload.payment_id,
+      details: insert.details || insert.error || null,
+    });
+    await logCheckoutDebug({
+      step: `${tableName}_direct_insert_failed`,
+      payload: { paymentId: basePayload.payment_id, orderId: basePayload.order_id, tableName, runtimeMode },
+      error: insert.details || insert.error || `${tableName} insert failed`,
+    });
+    return { ok: false, error: insert.error || `${tableName} insert failed`, details: insert.details };
+  }
+
+  const orderAtIso = createdAtIso;
+  const orderAtDate = new Date(orderAtIso);
+  const upgradedOrder = {
+    ...orderDraft,
+    id: basePayload.order_id,
+    invoiceNumber: orderDraft.invoiceNumber || `INV-${basePayload.order_id}`,
+    status,
+    db_saved: true,
+    admin_email_sent: false,
+    customer_email_sent: false,
+    createdAt: orderAtIso,
+    orderDate: new Intl.DateTimeFormat("en-IN", {
+      day: "2-digit",
+      month: "short",
+      year: "numeric",
+    }).format(orderAtDate),
+    orderTime: new Intl.DateTimeFormat("en-IN", { hour: "2-digit", minute: "2-digit" }).format(orderAtDate),
+    subtotal: Number(orderDraft.subtotal || 0),
+    totalAmount: Number(orderDraft.totalAmount || 0),
+    payment: {
+      provider: "Razorpay",
+      id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "not available",
+      status: paymentId ? "Paid" : "Pending",
+      mode: runtimeMode === "test" ? "test" : "live",
+    },
+    environment: {
+      mode: runtimeMode,
+      label: runtimeMode === "test" ? "TEST MODE" : "LIVE MODE",
+      isTest: runtimeMode === "test",
+    },
+    statusHistory: [
+      {
+        status,
+        at: orderAtIso,
+      },
+    ],
+    backend: {
+      provider: "supabase",
+      schema: tableName,
+      orderRowId: null,
+      userId: account.user.id,
+    },
+  };
+
+  console.info("[ORDER SAVED]", {
+    orderId: upgradedOrder.id,
+    paymentId: upgradedOrder.payment.id,
+    schema: upgradedOrder.backend.schema,
+    db_saved: upgradedOrder.db_saved,
+    admin_email_sent: upgradedOrder.admin_email_sent,
+    customer_email_sent: upgradedOrder.customer_email_sent,
+  });
+  console.log("[STEP 4] Order inserted into Supabase");
+
+  return { ok: true, order: upgradedOrder };
 }
 
 async function saveOrderAfterPayment({ orderDraft, paymentId }) {
+  console.log("[STEP 3] Starting saveOrderAfterPayment");
+
   if (!isConfigured()) {
     console.warn("[Supabase] Not configured", {
       url: window.SUPABASE_URL || "",
       anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY),
+    });
+    await logCheckoutDebug({
+      step: "save_order_supabase_not_configured",
+      payload: { paymentId, orderId: orderDraft && orderDraft.id, supabaseUrl: window.SUPABASE_URL || "", anonKeyPresent: Boolean(window.SUPABASE_ANON_KEY) },
+      error: "Supabase is not configured.",
     });
     return {
       ok: false,
@@ -500,18 +1249,45 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
   }
 
   if (!orderDraft) {
+    await logCheckoutDebug({
+      step: "save_order_missing_order_draft",
+      payload: { paymentId },
+      error: "Missing order draft.",
+    });
     return { ok: false, error: "Missing order draft." };
   }
 
   const client = getClient();
+  const account = await getCurrentAccount();
+
+  if (!account.user) {
+    await logCheckoutDebug({
+      step: "save_order_auth_required",
+      payload: { paymentId, orderId: orderDraft.id },
+      error: "Login is required before checkout.",
+    });
+    return { ok: false, error: "Login is required before checkout.", code: "auth_required" };
+  }
 
   try {
-    const buyer = orderDraft.buyer || {};
+    const accountProfile = account.profile || {};
+    const buyer = {
+      ...(orderDraft.buyer || {}),
+      name: accountProfile.full_name || accountProfile.name || (orderDraft.buyer && orderDraft.buyer.name) || "Customer",
+      email: accountProfile.email || (orderDraft.buyer && orderDraft.buyer.email) || "",
+      phone: accountProfile.phone || (orderDraft.buyer && orderDraft.buyer.phone) || "",
+      address: accountProfile.address || (orderDraft.buyer && orderDraft.buyer.address) || "",
+    };
     const createdAtIso = orderDraft.createdAt || new Date().toISOString();
+    const runtimeMode = getRuntimeMode();
+    const targetOrderTable = getOrderSourceTable();
 
     console.info("[Supabase] saveOrderAfterPayment start", {
       paymentId,
       draftId: orderDraft.id,
+      runtimeMode,
+      targetOrderTable,
+      userId: account.user.id,
       items: Array.isArray(orderDraft.items) ? orderDraft.items.length : 0,
       buyer: {
         name: buyer.name,
@@ -519,6 +1295,19 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         phone: buyer.phone,
       },
     });
+
+    if (runtimeMode === "test") {
+      return saveDirectOrderToTable({
+        client,
+        tableName: "test_orders",
+        orderDraft,
+        paymentId,
+        account,
+        buyer,
+        createdAtIso,
+        runtimeMode,
+      });
+    }
 
     // Best-effort: store customer profile in `users` if the ecommerce schema is installed.
     // This is optional and safe to ignore if the table doesn't exist or RLS blocks it.
@@ -528,12 +1317,14 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         table: "users",
         payloads: [
           {
+            id: account.user.id,
             full_name: buyer.name || "Customer",
             email: buyer.email || null,
             phone: buyer.phone || null,
             shipping_address: buyer.address || "",
           },
           {
+            id: account.user.id,
             name: buyer.name || "Customer",
             email: buyer.email || null,
             phone: buyer.phone || null,
@@ -565,13 +1356,20 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           p_products: productsJson,
           p_shipping_address: buyer.address || "",
           p_total_amount: Number(orderDraft.totalAmount || 0),
+          p_user_id: account.user.id,
         };
 
         console.info("[Supabase] Calling RPC place_order_cart", {
           ...rpcPayload,
           p_products_json: JSON.stringify(productsJson),
         });
-        const rpcResponse = await client.rpc("place_order_cart", rpcPayload);
+        let rpcResponse = await client.rpc("place_order_cart", rpcPayload);
+
+        if (rpcResponse.error && isMissingFunctionError(toSupabaseErrorDetails(rpcResponse.error), "place_order_cart")) {
+          const { p_user_id: _userId, ...legacyRpcPayload } = rpcPayload;
+          console.warn("[Supabase] Retrying legacy place_order_cart RPC without p_user_id");
+          rpcResponse = await client.rpc("place_order_cart", legacyRpcPayload);
+        }
 
         const rpcOrder = normalizeRpcOrderPayload(rpcResponse.data);
         const rpcError = rpcResponse.error;
@@ -588,6 +1386,9 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
             id: orderId,
             invoiceNumber: orderDraft.invoiceNumber || `INV-${orderId}`,
             status: normalizeStatus(rpcOrder.order_status || "Order Confirmed"),
+            db_saved: true,
+            admin_email_sent: Boolean(rpcOrder.admin_email_sent),
+            customer_email_sent: Boolean(rpcOrder.customer_email_sent),
             createdAt: orderAtIso,
             orderDate: new Intl.DateTimeFormat("en-IN", {
               day: "2-digit",
@@ -612,8 +1413,19 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
               provider: "supabase",
               schema: "orders_v2",
               orderRowId: rpcOrder.id,
+              userId: account.user.id,
             },
           };
+
+          console.info("[ORDER SAVED]", {
+            orderId,
+            paymentId: upgradedOrder.payment.id,
+            schema: upgradedOrder.backend.schema,
+            db_saved: upgradedOrder.db_saved,
+            admin_email_sent: upgradedOrder.admin_email_sent,
+            customer_email_sent: upgradedOrder.customer_email_sent,
+          });
+          console.log("[STEP 4] Order inserted into Supabase");
 
           return { ok: true, order: upgradedOrder };
         }
@@ -621,6 +1433,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         if (rpcError) {
           const details = toSupabaseErrorDetails(rpcError);
           console.warn("[Supabase] RPC place_order_cart failed", details);
+          await logCheckoutDebug({
+            step: "place_order_cart_rpc_failed",
+            payload: { paymentId, orderId: orderDraft.id, rpcPayload },
+            error: details,
+          });
 
           if (isMissingFunctionError(details, "place_order_cart")) {
             console.warn("[Supabase] Missing RPC place_order_cart. Install it via SQL migration.");
@@ -629,6 +1446,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
       }
     } catch (error) {
       console.warn("[Supabase] RPC place_order_cart threw", error);
+      await logCheckoutDebug({
+        step: "place_order_cart_rpc_threw",
+        payload: { paymentId, orderId: orderDraft.id },
+        error,
+      });
     }
 
     // If the v2 `orders` table exists but RPC is not installed, at least store the order row (no stock decrement).
@@ -646,6 +1468,14 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         totalQty,
         totalPrice: Number(orderDraft.totalAmount || 0),
       });
+      const gst = orderDraft.gst || {};
+      const commercePayload = {
+        environment_mode: runtimeMode,
+        shipping_fee: Number(orderDraft.shippingFee ?? orderDraft.shippingCharge ?? 0),
+        gst_enabled: Boolean(gst.enabled),
+        gst_percent: Number(gst.percent || 0),
+        gst_amount: Number(orderDraft.gstAmount ?? gst.amount ?? 0),
+      };
       const basePayload = {
         customer_name: buyer.name || "Customer",
         customer_email: buyer.email || null,
@@ -661,8 +1491,13 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         payment_id: paymentId || (orderDraft.payment && orderDraft.payment.id) || "",
         payment_status: paymentId ? "Paid" : "Pending",
         order_id: orderDraft.id,
+        user_id: account.user.id,
+        db_saved: true,
+        admin_email_sent: false,
+        customer_email_sent: false,
       };
       const liveSchemaPayload = {
+        user_id: basePayload.user_id,
         customer_name: basePayload.customer_name,
         customer_email: basePayload.customer_email,
         phone: basePayload.phone,
@@ -673,8 +1508,12 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         order_id: basePayload.order_id,
         products: productsJson,
         total_amount: Number(orderDraft.totalAmount || 0),
+        db_saved: true,
+        admin_email_sent: false,
+        customer_email_sent: false,
       };
       const liveSchemaMinimalPayload = {
+        user_id: basePayload.user_id,
         customer_name: basePayload.customer_name,
         customer_email: basePayload.customer_email,
         phone: basePayload.phone,
@@ -684,16 +1523,19 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
         order_id: basePayload.order_id,
         products: productsJson,
         total_amount: Number(orderDraft.totalAmount || 0),
+        db_saved: true,
+        admin_email_sent: false,
+        customer_email_sent: false,
       };
 
       const v2Insert = await insertWithFallback({
         client,
         table: "orders",
         payloads: [
-          { ...basePayload, order_status: normalizeStatus(orderDraft.status || "Order Confirmed") },
-          liveSchemaPayload,
-          liveSchemaMinimalPayload,
-          { ...basePayload, status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          { ...basePayload, ...commercePayload, order_status: normalizeStatus(orderDraft.status || "Order Confirmed") },
+          { ...liveSchemaPayload, ...commercePayload },
+          { ...liveSchemaMinimalPayload, ...commercePayload },
+          { ...basePayload, ...commercePayload, status: normalizeStatus(orderDraft.status || "Order Confirmed") },
           { ...basePayload },
         ],
       });
@@ -707,6 +1549,9 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
           id: basePayload.order_id,
           invoiceNumber: orderDraft.invoiceNumber || `INV-${basePayload.order_id}`,
           status: normalizeStatus(orderDraft.status || "Order Confirmed"),
+          db_saved: true,
+          admin_email_sent: false,
+          customer_email_sent: false,
           createdAt: orderAtIso,
           orderDate: new Intl.DateTimeFormat("en-IN", {
             day: "2-digit",
@@ -731,19 +1576,63 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
             provider: "supabase",
             schema: "orders_v2_no_stock",
             orderRowId: null,
+            userId: account.user.id,
           },
         };
 
+        console.info("[ORDER SAVED]", {
+          orderId: upgradedOrder.id,
+          paymentId: upgradedOrder.payment.id,
+          schema: upgradedOrder.backend.schema,
+          db_saved: upgradedOrder.db_saved,
+          admin_email_sent: upgradedOrder.admin_email_sent,
+          customer_email_sent: upgradedOrder.customer_email_sent,
+        });
+        console.log("[STEP 4] Order inserted into Supabase");
+
         return { ok: true, order: upgradedOrder };
       }
+      console.error("[SUPABASE INSERT FAILED]", {
+        table: "orders",
+        orderId: basePayload.order_id,
+        paymentId: basePayload.payment_id,
+        details: v2Insert.details || v2Insert.error || null,
+      });
+      await logCheckoutDebug({
+        step: "orders_direct_insert_failed",
+        payload: { paymentId: basePayload.payment_id, orderId: basePayload.order_id },
+        error: v2Insert.details || v2Insert.error || "orders insert failed",
+      });
     } catch (error) {
       console.warn("[Supabase] v2 orders insert threw", error);
+      console.error("[SUPABASE INSERT FAILED]", {
+        table: "orders",
+        orderId: orderDraft.id,
+        paymentId,
+        error: toSafeMessage(error),
+        details: toSupabaseErrorDetails(error),
+      });
+      await logCheckoutDebug({
+        step: "orders_direct_insert_threw",
+        payload: { paymentId, orderId: orderDraft.id },
+        error,
+      });
     }
 
     // Do not attempt older schema variants here.
     // Production checkout should use either:
     // - RPC `place_order_cart` (preferred), or
     // - direct insert into v2 `orders` table (fallback).
+    console.error("[SUPABASE INSERT FAILED]", {
+      orderId: orderDraft.id,
+      paymentId,
+      reason: "No Supabase order save strategy succeeded.",
+    });
+    await logCheckoutDebug({
+      step: "save_order_all_strategies_failed",
+      payload: { paymentId, orderId: orderDraft.id },
+      error: "No Supabase order save strategy succeeded.",
+    });
     return {
       ok: false,
       error:
@@ -752,6 +1641,11 @@ async function saveOrderAfterPayment({ orderDraft, paymentId }) {
     };
   } catch (error) {
     console.warn("[Supabase] saveOrderAfterPayment threw", error);
+    await logCheckoutDebug({
+      step: "save_order_unexpected_error",
+      payload: { paymentId, orderId: orderDraft && orderDraft.id },
+      error,
+    });
     return { ok: false, error: toSafeMessage(error), code: "unexpected_error", debug: { stage: "catch", error } };
   }
 }
@@ -770,9 +1664,10 @@ async function listOrdersForCustomer({ email, phone, limit = 20 }) {
   }
 
   try {
+    const orderTable = getOrderSourceTable();
     const buildQuery = (selectColumns) => {
       let orderQuery = client
-        .from("orders")
+        .from(orderTable)
         .select(selectColumns)
         .order("created_at", { ascending: false })
         .limit(Math.min(50, Math.max(1, Number(limit) || 20)));
@@ -814,6 +1709,53 @@ async function listOrdersForCustomer({ email, phone, limit = 20 }) {
   }
 }
 
+async function listOrdersForCurrentUser({ limit = 50 } = {}) {
+  if (!isConfigured()) {
+    return { ok: false, skipped: true, reason: "Supabase is not configured." };
+  }
+
+  const account = await getCurrentAccount();
+
+  if (!account.user) {
+    return { ok: false, error: "Login is required to view order history.", code: "auth_required" };
+  }
+
+  await claimCustomerOrdersForCurrentUser();
+
+  try {
+    const orderTable = getOrderSourceTable();
+    const buildQuery = (selectColumns) => getClient()
+      .from(orderTable)
+      .select(selectColumns)
+      .eq("user_id", account.user.id)
+      .order("created_at", { ascending: false })
+      .limit(Math.min(100, Math.max(1, Number(limit) || 50)));
+
+    let { data: orderRows, error: orderError } = await buildQuery(
+      "id, user_id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, total_amount, products, shipping_address, payment_status, order_status"
+    );
+
+    if (orderError && (orderError.code === "42703" || orderError.code === "PGRST204")) {
+      console.info("[Supabase] Retrying authenticated orders lookup with compact schema", toSupabaseErrorDetails(orderError));
+      const compactResult = await buildQuery(
+        "id, created_at, order_id, customer_name, customer_email, phone, products, total_amount, shipping_address, payment_status, order_status"
+      );
+      orderRows = compactResult.data;
+      orderError = compactResult.error;
+    }
+
+    if (orderError) {
+      return { ok: false, error: toSafeMessage(orderError), code: orderError.code || "orders_lookup_failed" };
+    }
+
+    const orders = (orderRows || []).map(orderFromFlatOrderRow);
+
+    return { ok: true, orders };
+  } catch (error) {
+    return { ok: false, error: toSafeMessage(error), code: "unexpected_error" };
+  }
+}
+
 async function fetchOrderByOrderId(orderId) {
   if (!isConfigured()) {
     return { ok: false, skipped: true, reason: "Supabase is not configured." };
@@ -825,10 +1767,11 @@ async function fetchOrderByOrderId(orderId) {
   }
 
   const client = getClient();
+  const orderTable = getOrderSourceTable();
 
   try {
     let { data: row, error } = await client
-      .from("orders")
+      .from(orderTable)
       .select("id, created_at, order_id, customer_name, customer_email, phone, product_name, quantity, total_price, total_amount, products, shipping_address, payment_status, order_status")
       .eq("order_id", safeOrderId)
       .maybeSingle();
@@ -836,7 +1779,7 @@ async function fetchOrderByOrderId(orderId) {
     if (error && (error.code === "42703" || error.code === "PGRST204")) {
       console.info("[Supabase] Retrying order lookup with compact live schema", toSupabaseErrorDetails(error));
       const compactResult = await client
-        .from("orders")
+        .from(orderTable)
         .select("id, created_at, order_id, customer_name, customer_email, phone, products, total_amount, shipping_address, payment_status, order_status")
         .eq("order_id", safeOrderId)
         .maybeSingle();
@@ -862,9 +1805,24 @@ async function fetchOrderByOrderId(orderId) {
 
 window.AaruniSupabaseBackend = {
   isConfigured,
+  getClient,
+  getAuthSession,
+  getCurrentAccount,
+  onAuthStateChange,
+  signUpCustomer,
+  signInCustomer,
+  signOutCustomer,
+  sendPasswordReset,
+  updatePassword,
+  upsertCustomerProfile,
+  claimCustomerOrdersForCurrentUser,
+  logCheckoutDebug,
   saveOrderAfterPayment,
   sendOrderNotificationEmail,
   listOrdersForCustomer,
+  listOrdersForCurrentUser,
   fetchOrderByOrderId,
   ORDER_STATUSES,
 };
+
+window.dispatchEvent(new CustomEvent("aaruni:supabase-ready"));

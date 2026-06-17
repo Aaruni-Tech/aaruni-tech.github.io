@@ -9,6 +9,7 @@
 
   const configuredUrl = String(supabaseConfig.url || window.SUPABASE_URL || "").trim().replace(/\/+$/, "");
   const configuredAnonKey = String(supabaseConfig.anonKey || window.SUPABASE_ANON_KEY || "").trim();
+  const expectedProjectRef = config.isProduction ? "fxoofgnhbvquenbfhdec" : "cnsmgxgkxgbeumnvidpk";
 
   window.SUPABASE_URL = isPlaceholder(configuredUrl) ? "" : configuredUrl;
   window.SUPABASE_ANON_KEY = isPlaceholder(configuredAnonKey) ? "" : configuredAnonKey;
@@ -41,5 +42,18 @@
 
   if (!window.SUPABASE_ANON_KEY) {
     console.warn("[Supabase] No public Supabase anon key configured for this environment.");
+  }
+
+  if (window.SUPABASE_URL && !window.SUPABASE_URL.includes(`${expectedProjectRef}.supabase.co`)) {
+    console.error("[Supabase] Project URL does not match active mode", {
+      mode: config.mode || "unknown",
+      expectedProjectRef,
+      url: window.SUPABASE_URL
+    });
+  }
+
+  if (/service[_-]?role|sb_secret_/i.test(window.SUPABASE_ANON_KEY)) {
+    console.error("[Supabase] Refusing unsafe key in browser config. Use only anon/publishable keys.");
+    window.SUPABASE_ANON_KEY = "";
   }
 })();

@@ -1,5 +1,6 @@
 -- Aaruni Tech - FINAL production-safe Supabase schema fix (idempotent)
--- Run in Supabase Dashboard -> SQL Editor against project fxoofgnhbvquenbfhdec.
+-- Run in Supabase Dashboard -> SQL Editor against each active Aaruni Tech project.
+-- TEST/DEV project: cnsmgxgkxgbeumnvidpk. PROD project: fxoofgnhbvquenbfhdec.
 -- Fixes checkout schema-cache failures without deleting existing production data.
 
 begin;
@@ -49,6 +50,7 @@ alter table public.customers add column if not exists address_parts jsonb not nu
 
 -- 3) Orders compatibility columns used by current and older checkout scripts.
 alter table public.orders add column if not exists order_id text;
+alter table public.orders add column if not exists user_id uuid;
 alter table public.orders add column if not exists customer_id uuid;
 alter table public.orders add column if not exists customer_name text;
 alter table public.orders add column if not exists customer_email text;
@@ -67,6 +69,9 @@ alter table public.orders add column if not exists currency text;
 alter table public.orders add column if not exists order_at timestamptz;
 alter table public.orders add column if not exists cart_items jsonb;
 alter table public.orders add column if not exists products jsonb;
+alter table public.orders add column if not exists db_saved boolean not null default true;
+alter table public.orders add column if not exists admin_email_sent boolean not null default false;
+alter table public.orders add column if not exists admin_email_sent_at timestamptz;
 alter table public.orders add column if not exists customer_email_sent boolean not null default false;
 alter table public.orders add column if not exists customer_email_sent_at timestamptz;
 
@@ -115,6 +120,9 @@ alter table public.orders alter column currency set default 'INR';
 alter table public.orders alter column order_at set default now();
 alter table public.orders alter column cart_items set default '[]'::jsonb;
 alter table public.orders alter column products set default '[]'::jsonb;
+alter table public.orders alter column db_saved set default true;
+alter table public.orders alter column admin_email_sent set default false;
+alter table public.orders alter column customer_email_sent set default false;
 
 update public.orders set products = '[]'::jsonb where products is null;
 update public.orders set cart_items = '[]'::jsonb where cart_items is null;
@@ -129,9 +137,15 @@ update public.orders set order_status = 'Order Confirmed' where order_status is 
 update public.orders set status = coalesce(status, order_status, 'Order Confirmed') where status is null;
 update public.orders set currency = 'INR' where currency is null;
 update public.orders set order_at = coalesce(order_at, created_at, now()) where order_at is null;
+update public.orders set db_saved = true where db_saved is null;
+update public.orders set admin_email_sent = false where admin_email_sent is null;
+update public.orders set customer_email_sent = false where customer_email_sent is null;
 
 alter table public.orders alter column products set not null;
 alter table public.orders alter column cart_items set not null;
+alter table public.orders alter column db_saved set not null;
+alter table public.orders alter column admin_email_sent set not null;
+alter table public.orders alter column customer_email_sent set not null;
 alter table public.orders alter column customer_id drop not null;
 
 create unique index if not exists idx_orders_order_id_unique
@@ -141,6 +155,7 @@ where order_id is not null;
 create index if not exists idx_orders_customer_email on public.orders(customer_email);
 create index if not exists idx_orders_phone on public.orders(phone);
 create index if not exists idx_orders_created_at on public.orders(created_at desc);
+create index if not exists idx_orders_user_id_created_at on public.orders(user_id, created_at desc);
 
 -- Order email notification idempotency log. This is used only by the
 -- send-order-notification Edge Function with the service role key.
@@ -168,6 +183,27 @@ create index if not exists idx_order_email_notifications_order_id on public.orde
 create index if not exists idx_order_email_notifications_payment_id on public.order_email_notifications(payment_id);
 create index if not exists idx_order_email_notifications_status on public.order_email_notifications(status);
 create index if not exists idx_order_email_notifications_email_type on public.order_email_notifications(email_type);
+
+-- Temporary checkout diagnostics. Keep insert-only from the browser; use this
+-- during TEST validation to identify the exact failing checkout step.
+create table if not exists public.checkout_debug_logs (
+  id uuid primary key default gen_random_uuid(),
+  step text not null,
+  payload jsonb,
+  error jsonb,
+  created_at timestamptz not null default now()
+);
+
+alter table public.checkout_debug_logs add column if not exists step text;
+alter table public.checkout_debug_logs add column if not exists payload jsonb;
+alter table public.checkout_debug_logs add column if not exists error jsonb;
+alter table public.checkout_debug_logs add column if not exists created_at timestamptz not null default now();
+alter table public.checkout_debug_logs alter column created_at set default now();
+update public.checkout_debug_logs set step = 'unknown' where step is null or trim(step) = '';
+alter table public.checkout_debug_logs alter column step set not null;
+
+create index if not exists idx_checkout_debug_logs_created_at on public.checkout_debug_logs(created_at desc);
+create index if not exists idx_checkout_debug_logs_step on public.checkout_debug_logs(step);
 
 -- 4) Products compatibility columns. The live table currently has legacy names like
 -- "product name", "product id", "image url", and "discription"; keep them and add canonical names.
@@ -280,7 +316,8 @@ create or replace function public.place_order_cart(
   p_phone text,
   p_products jsonb,
   p_shipping_address text,
-  p_total_amount numeric
+  p_total_amount numeric,
+  p_user_id uuid default null
 )
 returns public.orders
 language plpgsql
@@ -381,6 +418,7 @@ begin
   insert into public.orders (
     created_at,
     order_at,
+    user_id,
     customer_name,
     customer_email,
     phone,
@@ -397,11 +435,15 @@ begin
     order_status,
     status,
     currency,
-    order_id
+    order_id,
+    db_saved,
+    admin_email_sent,
+    customer_email_sent
   )
   values (
     now(),
     now(),
+    p_user_id,
     trim(p_customer_name),
     nullif(trim(coalesce(p_customer_email, '')), ''),
     nullif(trim(coalesce(p_phone, '')), ''),
@@ -418,7 +460,10 @@ begin
     'Order Confirmed',
     'Order Confirmed',
     'INR',
-    coalesce(nullif(trim(p_order_id), ''), 'AT-' || to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8)))
+    coalesce(nullif(trim(p_order_id), ''), 'AT-' || to_char(now() at time zone 'Asia/Kolkata', 'YYYYMMDD') || '-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 8))),
+    true,
+    false,
+    false
   )
   returning * into v_order;
 
@@ -426,15 +471,16 @@ begin
 end;
 $$;
 
-revoke all on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric) from public;
-grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric) to anon;
-grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric) to authenticated;
+revoke all on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) from public;
+grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) to anon;
+grant execute on function public.place_order_cart(text, text, text, text, text, text, jsonb, text, numeric, uuid) to authenticated;
 
 -- 7) Grants + RLS policies needed by GitHub Pages anon checkout.
 grant usage on schema public to anon, authenticated;
 grant insert on public.users to anon, authenticated;
 grant insert on public.customers to anon, authenticated;
 grant insert on public.orders to anon, authenticated;
+grant insert on public.checkout_debug_logs to anon, authenticated;
 grant select on public.products to anon, authenticated;
 
 alter table public.users enable row level security;
@@ -442,8 +488,10 @@ alter table public.customers enable row level security;
 alter table public.orders enable row level security;
 alter table public.products enable row level security;
 alter table public.order_email_notifications enable row level security;
+alter table public.checkout_debug_logs enable row level security;
 
 revoke all on public.order_email_notifications from anon, authenticated;
+revoke select, update, delete on public.checkout_debug_logs from anon, authenticated;
 
 drop policy if exists "public_insert_users" on public.users;
 create policy "public_insert_users" on public.users for insert to anon with check (true);
@@ -459,6 +507,11 @@ drop policy if exists "public_insert_orders" on public.orders;
 create policy "public_insert_orders" on public.orders for insert to anon with check (true);
 drop policy if exists "auth_insert_orders" on public.orders;
 create policy "auth_insert_orders" on public.orders for insert to authenticated with check (true);
+
+drop policy if exists "public_insert_checkout_debug_logs" on public.checkout_debug_logs;
+create policy "public_insert_checkout_debug_logs" on public.checkout_debug_logs for insert to anon with check (true);
+drop policy if exists "auth_insert_checkout_debug_logs" on public.checkout_debug_logs;
+create policy "auth_insert_checkout_debug_logs" on public.checkout_debug_logs for insert to authenticated with check (true);
 
 drop policy if exists "public_read_products" on public.products;
 create policy "public_read_products" on public.products for select to anon using (true);
@@ -478,7 +531,7 @@ commit;
 select table_name
 from information_schema.tables
 where table_schema = 'public'
-  and table_name in ('users', 'customers', 'orders', 'products', 'order_email_notifications')
+  and table_name in ('users', 'customers', 'orders', 'products', 'order_email_notifications', 'checkout_debug_logs')
 order by table_name;
 
 select table_name, column_name, data_type
@@ -487,7 +540,7 @@ where table_schema = 'public'
   and (
     (table_name = 'users' and column_name in ('full_name', 'shipping_address', 'email', 'phone'))
     or
-    (table_name = 'orders' and column_name in ('order_id', 'product_name', 'quantity', 'total_price', 'total_amount', 'products', 'order_status', 'phone'))
+    (table_name = 'orders' and column_name in ('order_id', 'user_id', 'product_name', 'quantity', 'total_price', 'total_amount', 'products', 'order_status', 'phone', 'db_saved', 'admin_email_sent', 'customer_email_sent'))
     or
     (table_name = 'products' and column_name in ('id', 'product_id', 'slug', 'product_name', 'price', 'stock', 'image_url', 'description'))
   )
